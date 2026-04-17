@@ -1,0 +1,28 @@
+{
+  "name": "parsebox",
+  "version": "1.0.0",
+  "description": "ParseBox.rPi docs and Raspberry Pi kiosk scaffold",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No test infrastructure is configured yet.\"",
+    "build": "npm run docs:build",
+    "docs:dev": "vitepress dev docs --host 0.0.0.0 --port 4173",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs --host 0.0.0.0 --port 4173"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/parsehex/ParseBox.rPi.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/parsehex/ParseBox.rPi/issues"
+  },
+  "homepage": "https://github.com/parsehex/ParseBox.rPi#readme",
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}
