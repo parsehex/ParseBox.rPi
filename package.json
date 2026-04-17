@@ -2,7 +2,6 @@
   "name": "parsebox",
   "version": "1.0.0",
   "description": "ParseBox.rPi docs and Raspberry Pi kiosk scaffold",
-  "main": "index.js",
   "scripts": {
     "test": "echo \"No test infrastructure is configured yet.\"",
     "build": "npm run docs:build",
