@@ -23,8 +23,10 @@ Use the full guide:
 That guide walks through:
 
 - fresh OS prep
+- boot partition edits for SPI + optional console mapping
 - minimal package install
 - Xorg to SPI framebuffer
+- scripted setup path
 - kiosk browser autostart on boot
 - troubleshooting checks
 

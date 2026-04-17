@@ -12,7 +12,7 @@ ParseBox.rPi is a docs-first toolkit for getting web prototypes running on Raspb
 
 1. Read [Getting Started](/guide/getting-started)
 2. Follow [Fresh Pi Setup (Kiosk Baseline)](/guide/pi-fresh-setup)
-3. Adapt the service + kiosk pieces for your app runtime
+3. Run the setup scripts and adapt the kiosk target URL for your app
 
 ## Scope
 

@@ -1,192 +1,143 @@
 # Fresh Pi Setup (Kiosk Baseline)
 
-This guide captures a proven path from a brand-new SD card to a booting browser kiosk on Raspberry Pi OS Lite.
+This is the active setup guide for bringing up a fresh Raspberry Pi as a web kiosk baseline.
 
-It is intentionally app-agnostic: use it as the baseline, then point kiosk mode at your own local service.
+The previous version has been preserved as archive notes:
 
-## Goal State
+- [Archived Setup Notes](/guide/setup.old)
 
-- Raspberry Pi boots to local tty1 autologin
-- Xorg runs on the SPI framebuffer (`/dev/fb1`)
-- Chromium launches in kiosk mode on boot
-- Kiosk points to a local URL you control
-
-## 0) Flash And First Boot
+## 0) Flash the SD card
 
 1. Use Raspberry Pi Imager: <https://www.raspberrypi.com/software/>
-2. Select Raspberry Pi OS Lite
-3. In advanced settings, configure hostname, user/password, locale/timezone, and optional Wi-Fi
-4. Before first boot, add your SPI display overlay in `config.txt` if your hardware requires it
-5. Boot the Pi and run:
+2. Select Raspberry Pi OS Lite.
+3. In the imager advanced/customize settings, set hostname, user, password, locale, and network.
+4. Flash and eject.
 
-```bash
-sudo apt update && sudo apt full-upgrade -y
+## 1) Pre-boot SD card edits (on your computer)
+
+With the flashed SD card still mounted, edit:
+
+1. `config.txt`
+2. `cmdline.txt`
+
+For SPI display support, ensure these are present:
+
+```text
+dtparam=spi=on
+dtoverlay=piscreen,speed=16000000
 ```
 
-## 1) Install Base Packages
+For console output on the small display during boot (optional), append this token to the existing single line in `cmdline.txt`:
 
-```bash
-sudo apt install -y \
-  git curl \
-  xauth xinit xserver-xorg openbox unclutter x11-xserver-utils \
-  chromium
+```text
+fbcon=map:10
 ```
 
-## 2) Optional: Install Node.js For App Runtime
+## 2) First boot and prepare remote control
 
-If your target app needs Node:
+1. Boot the Pi.
+2. Ensure SSH is enabled and reachable from your workstation.
+3. Clone this repo on your workstation (not on the Pi) if you have not already.
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt-get install -y nodejs
-node -v
-npm -v
+git clone https://github.com/parsehex/ParseBox.rPi.git
+cd ParseBox.rPi
 ```
 
-## 3) Force Xorg To SPI Framebuffer
+## 3) Run remote system setup script
 
-Create Xorg config:
+The script handles:
+
+- system update + full upgrade
+- base package install
+- Node.js install (NodeSource LTS)
+- Xorg framebuffer config for SPI display
+- touch calibration config
+- boot config updates (SPI + overlay)
+- optional tty1 autologin via raspi-config
+
+Run from your workstation:
 
 ```bash
-sudo mkdir -p /etc/X11/xorg.conf.d
-sudo tee /etc/X11/xorg.conf.d/99-fbdev.conf >/dev/null <<'EOF'
-Section "Device"
-  Identifier  "SPI Display"
-  Driver      "fbdev"
-  Option      "fbdev" "/dev/fb1"
-EndSection
-
-Section "Screen"
-  Identifier "Screen0"
-  Device     "SPI Display"
-EndSection
-EOF
+PI_HOST=parsebox.local PI_USER=pi bash scripts/pi/setup-system.sh
 ```
 
-If your LCD uses a different framebuffer, replace `/dev/fb1` accordingly.
-
-## 4) Optional: Touch Calibration Example
-
-If touch is inverted or mirrored, add a calibration matrix:
+Optional behavior flags:
 
 ```bash
-sudo tee /etc/X11/xorg.conf.d/98-touch-calibration.conf >/dev/null <<'EOF'
-Section "InputClass"
-  Identifier "Touchscreen calibration"
-  MatchIsTouchscreen "on"
-  Driver "libinput"
-  Option "CalibrationMatrix" "1 0 0 0 -1 1 0 0 1"
-EndSection
-EOF
+PI_HOST=parsebox.local PI_USER=pi ENABLE_FBCON_MAP=1 bash scripts/pi/setup-system.sh
+PI_HOST=parsebox.local PI_USER=pi INSTALL_NODE=0 bash scripts/pi/setup-system.sh
+PI_HOST=parsebox.local PI_USER=pi ENABLE_TTY_AUTOLOGIN=0 bash scripts/pi/setup-system.sh
 ```
 
-## 5) Verify Browser Launch Manually
-
-Use your app URL if available. Otherwise, use a temporary test URL.
+Optional remote options:
 
 ```bash
-xinit /usr/bin/chromium --app=http://127.0.0.1:4174/ --disable-gpu --use-gl=swiftshader -- :0 vt1
+PI_HOST=parsebox.local PI_PORT=22 SSH_OPTS='-o ConnectTimeout=5' bash scripts/pi/setup-system.sh
 ```
 
-If this works on the target display, continue with autostart setup.
+## 4) Run remote kiosk-user setup script
 
-## 6) Enable tty1 Autologin
+This script creates/updates:
+
+- `~/.profile` login hook for tty1 kiosk start
+- `~/.xinitrc` with Chromium kiosk launch
+
+Run from your workstation:
 
 ```bash
-sudo raspi-config nonint do_boot_behaviour B2
+PI_HOST=parsebox.local PI_USER=pi bash scripts/pi/setup-kiosk-user.sh
+```
+
+Set a custom app URL:
+
+```bash
+PI_HOST=parsebox.local PI_USER=pi APP_URL=http://127.0.0.1:5000/ bash scripts/pi/setup-kiosk-user.sh
+```
+
+## 5) Reboot and validate
+
+```bash
 sudo reboot
 ```
 
-After reboot, confirm your user autologs in on local tty1.
+Confirm:
 
-## 7) Configure Kiosk Autostart
+- tty1 autologin works (if enabled)
+- X starts from tty1
+- Chromium launches in kiosk mode
+- display output is correct
+- touch direction is correct
 
-### 7.1 Add tty1 login hook
+## 6) Temporary kiosk disable switch
 
-Append to `~/.profile`:
-
-```sh
-if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ] && [ ! -f "$HOME/.no-kiosk" ]; then
-  exec startx "$HOME/.xinitrc" -- :0 vt1 -keeptty
-fi
-```
-
-### 7.2 Create `~/.xinitrc`
-
-```bash
-cat > ~/.xinitrc <<'EOF'
-#!/usr/bin/env sh
-xset -dpms
-xset s off
-xset s noblank
-unclutter -idle 0.5 -root &
-
-until curl -fsS http://127.0.0.1:4174/ >/dev/null; do
-  sleep 1
-done
-
-sed -i 's/"exited_cleanly":false/"exited_cleanly":true/' ~/.config/chromium/'Local State' 2>/dev/null || true
-sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]\+"/"exit_type":"Normal"/' ~/.config/chromium/Default/Preferences 2>/dev/null || true
-
-exec chromium \
-  --kiosk \
-  --app=http://127.0.0.1:4174/ \
-  --force-device-scale-factor=1 \
-  --disable-infobars \
-  --disable-gpu \
-  --use-gl=swiftshader \
-  --no-first-run \
-  --disable-pinch \
-  --overscroll-history-navigation=0 \
-  --start-maximized
-EOF
-
-chmod +x ~/.xinitrc
-```
-
-Update `http://127.0.0.1:4174/` to your app URL when ready.
-
-### 7.3 Safety switch
-
-Disable kiosk startup:
+Disable kiosk launch:
 
 ```bash
 touch ~/.no-kiosk
 ```
 
-Re-enable kiosk startup:
+Re-enable kiosk launch:
 
 ```bash
 rm ~/.no-kiosk
 ```
 
-## 8) Reboot And Confirm
+## Troubleshooting
 
-```bash
-sudo reboot
-```
+### No display output in X/Chromium
 
-After reboot, verify:
+1. Verify SPI lines in boot config.
+2. Verify `/etc/X11/xorg.conf.d/99-fbdev.conf` points to `/dev/fb1`.
+3. Reboot and re-test.
 
-- display comes up consistently
-- Chromium launches in kiosk mode
-- kiosk URL is reachable and interactive
+### Touch is inverted/flipped
 
-## 9) Troubleshooting
+1. Check `/etc/X11/xorg.conf.d/98-touch-calibration.conf` exists.
+2. Tune the `CalibrationMatrix` values for your panel if needed.
 
-### Console appears, but Xorg/Chromium does not
+### Kiosk does not auto-start
 
-- Verify SPI overlay and reboot
-- Check framebuffer mapping (`/dev/fb1` vs another framebuffer)
-- Review Xorg logs: `/var/log/Xorg.0.log`
-
-### Kiosk does not auto-launch
-
-- Confirm tty1 autologin is active
-- Confirm `~/.profile` hook is present
-- Confirm `~/.xinitrc` is executable
-- Confirm `~/.no-kiosk` does not exist
-
-### Chromium launches before app is ready
-
-Increase startup wait robustness in `~/.xinitrc` and confirm your service starts before browser launch.
+1. Confirm `~/.profile` kiosk block exists.
+2. Confirm `~/.xinitrc` is executable.
+3. Confirm `~/.no-kiosk` does not exist.

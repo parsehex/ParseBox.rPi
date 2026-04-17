@@ -132,23 +132,6 @@ This script:
 - installs and enables parseplayer.service
 - starts the service
 
-## 6) Verify backend service
-
-```bash
-sudo systemctl status parseplayer --no-pager
-curl -I http://127.0.0.1:5000/
-```
-
-## 7) Test Chromium in kiosk mode locally
-
-Before enabling boot kiosk, validate Chromium launch on the LCD:
-
-```bash
-xinit /usr/bin/chromium --app=http://127.0.0.1:5000/ --disable-gpu --use-gl=swiftshader -- :0 vt1
-```
-
-Chromium should open on the LCD display. If it works, continue with kiosk automation.
-
 ## 8) Enable tty1 autologin (raspi-config)
 
 Run:
