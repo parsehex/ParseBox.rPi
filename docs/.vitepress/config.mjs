@@ -5,12 +5,16 @@ export default {
   themeConfig: {
     nav: [
       { text: 'Docs', link: '/' },
-      { text: 'Getting Started', link: '/guide/getting-started' }
+      { text: 'Getting Started', link: '/guide/getting-started' },
+      { text: 'Fresh Pi Setup', link: '/guide/pi-fresh-setup' }
     ],
     sidebar: [
       {
-        text: 'Guides',
-        items: [{ text: 'Getting Started', link: '/guide/getting-started' }]
+        text: 'Guide',
+        items: [
+          { text: 'Getting Started', link: '/guide/getting-started' },
+          { text: 'Fresh Pi Setup (Kiosk Baseline)', link: '/guide/pi-fresh-setup' }
+        ]
       }
     ]
   }
