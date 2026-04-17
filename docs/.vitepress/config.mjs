@@ -5,16 +5,12 @@ export default {
   themeConfig: {
     nav: [
       { text: 'Docs', link: '/' },
-      { text: 'Getting Started', link: '/guide/getting-started' },
-      { text: 'Kiosk', link: '/kiosk' }
+      { text: 'Getting Started', link: '/guide/getting-started' }
     ],
     sidebar: [
       {
         text: 'Guides',
-        items: [
-          { text: 'Getting Started', link: '/guide/getting-started' },
-          { text: 'Kiosk Mode', link: '/kiosk' }
-        ]
+        items: [{ text: 'Getting Started', link: '/guide/getting-started' }]
       }
     ]
   }

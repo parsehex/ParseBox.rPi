@@ -6,7 +6,7 @@ ParseBox is a docs + tooling scaffold for Raspberry Pi web projects.
 
 - Provide docs and onboarding/troubleshooting resources for Pi-based web projects
 - Build and deploy docs to GitHub Pages
-- Provide a minimal kiosk-facing site for display mode
+- Provide a separate root-level minimal kiosk-facing site for display mode
 
 ## Quick Start
 
