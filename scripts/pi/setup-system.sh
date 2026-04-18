@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="${SCRIPT_DIR}/templates"
 XORG_FBDEV_TEMPLATE_FILE="${TEMPLATE_DIR}/xorg.99-fbdev.conf"
 XORG_TOUCH_TEMPLATE_FILE="${TEMPLATE_DIR}/xorg.98-touch-calibration.conf.template"
+RESTART_FB_IMAGE_TEMPLATE_FILE="${TEMPLATE_DIR}/restarting.480x320.rgb565le.raw"
 
 PI_HOST="${PI_HOST:-raspberrypi}"
 PI_USER="${PI_USER:-user}"
@@ -24,7 +25,8 @@ fi
 
 for template_file in \
   "${XORG_FBDEV_TEMPLATE_FILE}" \
-  "${XORG_TOUCH_TEMPLATE_FILE}"
+  "${XORG_TOUCH_TEMPLATE_FILE}" \
+  "${RESTART_FB_IMAGE_TEMPLATE_FILE}"
 do
   if [[ ! -f "${template_file}" ]]; then
     echo "Missing template file: ${template_file}"
@@ -35,11 +37,13 @@ done
 ENABLE_TTY_AUTOLOGIN="${ENABLE_TTY_AUTOLOGIN:-1}"
 INSTALL_NODE="${INSTALL_NODE:-1}"
 ENABLE_FBCON_MAP="${ENABLE_FBCON_MAP:-1}"
+ENABLE_CLEAR_FB_SHUTDOWN="${ENABLE_CLEAR_FB_SHUTDOWN:-1}"
 NODE_CHANNEL="${NODE_CHANNEL:-lts}"
 TOUCH_CALIBRATION_MATRIX="${TOUCH_CALIBRATION_MATRIX:-1 0 0 0 -1 1 0 0 1}"
 
 XORG_FBDEV_TEMPLATE_B64="$(base64 "${XORG_FBDEV_TEMPLATE_FILE}" | tr -d '\n')"
 XORG_TOUCH_TEMPLATE_B64="$(base64 "${XORG_TOUCH_TEMPLATE_FILE}" | tr -d '\n')"
+RESTART_FB_IMAGE_TEMPLATE_B64="$(base64 "${RESTART_FB_IMAGE_TEMPLATE_FILE}" | tr -d '\n')"
 
 TARGET="${PI_USER}@${PI_HOST}"
 
@@ -58,8 +62,10 @@ set -euo pipefail
 ENABLE_TTY_AUTOLOGIN="${ENABLE_TTY_AUTOLOGIN:-1}"
 INSTALL_NODE="${INSTALL_NODE:-1}"
 ENABLE_FBCON_MAP="${ENABLE_FBCON_MAP:-0}"
+ENABLE_CLEAR_FB_SHUTDOWN="${ENABLE_CLEAR_FB_SHUTDOWN:-1}"
 NODE_CHANNEL="${NODE_CHANNEL:-lts}"
 TOUCH_CALIBRATION_MATRIX="${TOUCH_CALIBRATION_MATRIX:-1 0 0 0 -1 1 0 0 1}"
+RESTART_FB_IMAGE_FILE="/usr/local/share/parsebox/restarting.480x320.rgb565le.raw"
 
 escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
@@ -103,32 +109,32 @@ append_cmdline_token() {
   fi
 }
 
-echo "[1/6] Updating system packages"
+echo "[1/7] Updating system packages"
 apt update
 apt full-upgrade -y
 
-echo "[2/6] Installing base packages"
+echo "[2/7] Installing base packages"
 apt install -y \
   git curl ca-certificates \
   xauth xinit xserver-xorg openbox unclutter x11-xserver-utils \
   chromium
 
 if [[ "${INSTALL_NODE}" == "1" ]]; then
-  echo "[3/6] Installing Node.js (${NODE_CHANNEL})"
+  echo "[3/7] Installing Node.js (${NODE_CHANNEL})"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_CHANNEL}.x" | bash -
   apt install -y nodejs
 else
-  echo "[3/6] Skipping Node.js install (INSTALL_NODE=${INSTALL_NODE})"
+  echo "[3/7] Skipping Node.js install (INSTALL_NODE=${INSTALL_NODE})"
 fi
 
-echo "[4/6] Writing Xorg and touch configs"
+echo "[4/7] Writing Xorg and touch configs"
 mkdir -p /etc/X11/xorg.conf.d
 
 printf '%s' "${XORG_FBDEV_TEMPLATE_B64}" | base64 -d >/etc/X11/xorg.conf.d/99-fbdev.conf
 printf '%s' "${XORG_TOUCH_TEMPLATE_B64}" | base64 -d \
   | sed -e "s|__TOUCH_CALIBRATION_MATRIX__|${TOUCH_CALIBRATION_MATRIX_ESC}|g" >/etc/X11/xorg.conf.d/98-touch-calibration.conf
 
-echo "[5/6] Updating boot config"
+echo "[5/7] Updating boot config"
 append_unique_line "${BOOT_CONFIG_FILE}" "dtparam=spi=on"
 append_unique_line "${BOOT_CONFIG_FILE}" "dtoverlay=piscreen,speed=16000000"
 
@@ -136,7 +142,52 @@ if [[ "${ENABLE_FBCON_MAP}" == "1" ]]; then
   append_cmdline_token "fbcon=map:10"
 fi
 
-echo "[6/6] Configuring tty1 autologin"
+echo "[6/7] Installing framebuffer clear-on-shutdown service"
+if [[ "${ENABLE_CLEAR_FB_SHUTDOWN}" == "1" ]]; then
+  mkdir -p /usr/local/share/parsebox
+  printf '%s' "${RESTART_FB_IMAGE_TEMPLATE_B64}" | base64 -d >"${RESTART_FB_IMAGE_FILE}"
+
+  cat >/usr/local/bin/clear-fb1.sh <<'EOF'
+#!/usr/bin/env sh
+FB=/dev/fb1
+SYS=/sys/class/graphics/fb1
+RESTART_FB_IMAGE_FILE=/usr/local/share/parsebox/restarting.480x320.rgb565le.raw
+
+if [ -e "$FB" ] && [ -r "$SYS/virtual_size" ] && [ -r "$SYS/bits_per_pixel" ]; then
+  IFS=, read -r W H < "$SYS/virtual_size"
+  BPP=$(cat "$SYS/bits_per_pixel")
+  SIZE=$((W * H * BPP / 8))
+
+  if [ "$W" = "480" ] && [ "$H" = "320" ] && [ "$BPP" = "16" ] && [ -r "$RESTART_FB_IMAGE_FILE" ]; then
+    dd if="$RESTART_FB_IMAGE_FILE" of="$FB" bs="$SIZE" count=1 status=none || true
+  else
+    dd if=/dev/zero of="$FB" bs="$SIZE" count=1 status=none || true
+  fi
+fi
+EOF
+  chmod +x /usr/local/bin/clear-fb1.sh
+
+  cat >/etc/systemd/system/clear-fb1-on-shutdown.service <<'EOF'
+[Unit]
+Description=Clear SPI framebuffer on shutdown/reboot
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/clear-fb1.sh
+
+[Install]
+WantedBy=shutdown.target reboot.target halt.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable clear-fb1-on-shutdown.service
+else
+  echo "Skipping framebuffer clear service (ENABLE_CLEAR_FB_SHUTDOWN=${ENABLE_CLEAR_FB_SHUTDOWN})"
+fi
+
+echo "[7/7] Configuring tty1 autologin"
 if [[ "${ENABLE_TTY_AUTOLOGIN}" == "1" ]]; then
   if command -v raspi-config >/dev/null 2>&1; then
     raspi-config nonint do_boot_behaviour B2 || true
@@ -154,5 +205,5 @@ echo "  PI_HOST=<host> PI_USER=<user> bash scripts/pi/setup-kiosk-user.sh"
 REMOTE_SCRIPT
 )"
 
-REMOTE_RUNNER="sudo ENABLE_TTY_AUTOLOGIN=${ENABLE_TTY_AUTOLOGIN@Q} INSTALL_NODE=${INSTALL_NODE@Q} ENABLE_FBCON_MAP=${ENABLE_FBCON_MAP@Q} NODE_CHANNEL=${NODE_CHANNEL@Q} TOUCH_CALIBRATION_MATRIX=${TOUCH_CALIBRATION_MATRIX@Q} XORG_FBDEV_TEMPLATE_B64=${XORG_FBDEV_TEMPLATE_B64@Q} XORG_TOUCH_TEMPLATE_B64=${XORG_TOUCH_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
+REMOTE_RUNNER="sudo ENABLE_TTY_AUTOLOGIN=${ENABLE_TTY_AUTOLOGIN@Q} INSTALL_NODE=${INSTALL_NODE@Q} ENABLE_FBCON_MAP=${ENABLE_FBCON_MAP@Q} ENABLE_CLEAR_FB_SHUTDOWN=${ENABLE_CLEAR_FB_SHUTDOWN@Q} NODE_CHANNEL=${NODE_CHANNEL@Q} TOUCH_CALIBRATION_MATRIX=${TOUCH_CALIBRATION_MATRIX@Q} XORG_FBDEV_TEMPLATE_B64=${XORG_FBDEV_TEMPLATE_B64@Q} XORG_TOUCH_TEMPLATE_B64=${XORG_TOUCH_TEMPLATE_B64@Q} RESTART_FB_IMAGE_TEMPLATE_B64=${RESTART_FB_IMAGE_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
 ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "${REMOTE_RUNNER}"

@@ -14,6 +14,7 @@ APP_REPO="${APP_REPO:-}"
 APP_REPO_DIR="${APP_REPO_DIR:-}"
 APP_REF="${APP_REF:-}"
 SPLASH_MARKER_FILE="${SPLASH_MARKER_FILE:-/etc/parsebox/splash-enabled}"
+RESTART_TTY_ON_UPDATE="${RESTART_TTY_ON_UPDATE:-1}"
 SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT:-4174}"
 WAIT_URL="${WAIT_URL:-http://127.0.0.1:${SERVICE_HTTP_PORT}/}"
 APP_URL="${APP_URL:-${WAIT_URL}}"
@@ -97,6 +98,9 @@ APP_REF="${APP_REF:-}"
 APP_ID="${APP_ID:-custom}"
 SPLASH_MARKER_FILE="${SPLASH_MARKER_FILE:-/etc/parsebox/splash-enabled}"
 RESULT_FILE="${RESULT_FILE:-${HOME}/.parsebox/install-result.env}"
+REPO_ALREADY_PRESENT=0
+APP_UPDATED=0
+INITIAL_HEAD=""
 
 mkdir -p "$(dirname "${RESULT_FILE}")"
 
@@ -116,7 +120,7 @@ escape_sed_replacement() {
 
 sync_env_from_example() {
   local env_prompt key value current_line current_value trimmed_value
-  local input_value quoted_value replacement_line replacement_line_esc needs_prompt
+  local input_value replacement_line replacement_line_esc needs_prompt
 
   env_prompt="${ENV_PROMPT:-1}"
   if [[ ! -f ".env.example" ]]; then
@@ -180,8 +184,7 @@ sync_env_from_example() {
       continue
     fi
 
-    quoted_value="$(printf '%s' "${input_value}" | sed -e 's/\\/\\\\/g' -e 's/\"/\\\"/g')"
-    replacement_line="${key}=\"${quoted_value}\""
+    replacement_line="${key}=${input_value}"
     replacement_line_esc="$(escape_sed_replacement "${replacement_line}")"
     if grep -q -E "^${key}=" .env; then
       sed -i -e "s|^${key}=.*$|${replacement_line_esc}|" .env
@@ -193,6 +196,8 @@ sync_env_from_example() {
 
 echo "[1/4] Syncing app repo"
 if [[ -d "${APP_REPO_DIR}/.git" ]]; then
+  REPO_ALREADY_PRESENT=1
+  INITIAL_HEAD="$(git -C "${APP_REPO_DIR}" rev-parse HEAD 2>/dev/null || true)"
   git -C "${APP_REPO_DIR}" fetch --all --prune
   git -C "${APP_REPO_DIR}" pull --ff-only
 else
@@ -202,6 +207,13 @@ fi
 
 if [[ -n "${APP_REF}" ]]; then
   git -C "${APP_REPO_DIR}" checkout "${APP_REF}"
+fi
+
+if [[ "${REPO_ALREADY_PRESENT}" == "1" ]]; then
+  FINAL_HEAD="$(git -C "${APP_REPO_DIR}" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n "${INITIAL_HEAD}" && -n "${FINAL_HEAD}" && "${INITIAL_HEAD}" != "${FINAL_HEAD}" ]]; then
+    APP_UPDATED=1
+  fi
 fi
 
 cd "${APP_REPO_DIR}"
@@ -262,6 +274,7 @@ if [[ -f "${SPLASH_MARKER_FILE}" ]]; then
   parsebox_splash_helper="/usr/local/bin/parsebox-install-plymouth-theme"
   app_splash_image=""
   app_splash_framebuffer="/dev/fb1"
+  current_theme_id=""
   app_theme_id="$(printf '%s' "${APP_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
   app_theme_name="${APP_ID}"
 
@@ -279,11 +292,14 @@ if [[ -f "${SPLASH_MARKER_FILE}" ]]; then
   done
 
   marker_framebuffer="$(sed -n 's/^FRAMEBUFFER=//p' "${SPLASH_MARKER_FILE}" | head -n 1 || true)"
+  current_theme_id="$(sed -n 's/^THEME_ID=//p' "${SPLASH_MARKER_FILE}" | head -n 1 || true)"
   if [[ -n "${marker_framebuffer}" ]]; then
     app_splash_framebuffer="${marker_framebuffer}"
   fi
 
-  if [[ -n "${app_splash_image}" && -x "${parsebox_splash_helper}" ]]; then
+  if [[ -n "${current_theme_id}" && "${current_theme_id}" == "${app_theme_id}" ]]; then
+    echo "  App splash already active (${app_theme_id}); skipping reinstall."
+  elif [[ -n "${app_splash_image}" && -x "${parsebox_splash_helper}" ]]; then
     if command -v sudo >/dev/null 2>&1; then
       sudo "${parsebox_splash_helper}" \
         --theme-id "${app_theme_id}" \
@@ -308,6 +324,7 @@ cat >"${RESULT_FILE}" <<EOF
 APP_REPO_DIR=${APP_REPO_DIR}
 SERVICE_HTTP_DIRECTORY=${SERVE_DIR}
 APP_URL_PATH=${APP_URL_PATH}
+INSTALL_WAS_UPDATE=${APP_UPDATED}
 EOF
 
 echo "[5/5] Remote app install complete"
@@ -324,6 +341,11 @@ RESULT_CONTENT="$(ssh -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "cat ${
 
 SERVICE_HTTP_DIRECTORY="$(printf '%s\n' "${RESULT_CONTENT}" | sed -n 's/^SERVICE_HTTP_DIRECTORY=//p' | head -n 1)"
 APP_URL_PATH="$(printf '%s\n' "${RESULT_CONTENT}" | sed -n 's/^APP_URL_PATH=//p' | head -n 1)"
+INSTALL_WAS_UPDATE="$(printf '%s\n' "${RESULT_CONTENT}" | sed -n 's/^INSTALL_WAS_UPDATE=//p' | head -n 1)"
+
+if [[ -z "${INSTALL_WAS_UPDATE}" ]]; then
+  INSTALL_WAS_UPDATE="0"
+fi
 
 if [[ -z "${SERVICE_HTTP_DIRECTORY}" ]]; then
   echo "Missing SERVICE_HTTP_DIRECTORY in remote result file: ${RESULT_FILE}"
@@ -347,9 +369,15 @@ SERVICE_HTTP_DIRECTORY="${SERVICE_HTTP_DIRECTORY}" \
 FORCE="${FORCE}" \
 bash "${SCRIPT_DIR}/setup-kiosk-user.sh"
 
+if [[ "${RESTART_TTY_ON_UPDATE}" == "1" && "${INSTALL_WAS_UPDATE}" == "1" ]]; then
+  echo "Detected app update; restarting getty@tty1 to refresh kiosk session"
+  ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "sudo systemctl restart getty@tty1.service || sudo systemctl restart getty@tty1"
+fi
+
 echo
 echo "Install complete."
 echo "App repo: ${APP_REPO}"
 echo "Remote app dir: ${APP_REPO_DIR}"
 echo "HTTP serve dir: ${SERVICE_HTTP_DIRECTORY}"
 echo "Kiosk URL: ${APP_URL}"
+echo "Was update: ${INSTALL_WAS_UPDATE}"
