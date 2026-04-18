@@ -39,6 +39,8 @@ WAIT_URL="${WAIT_URL:-${APP_URL}}"
 FORCE="${FORCE:-0}"
 REPO_URL="${REPO_URL:-https://github.com/parsehex/ParseBox.rPi.git}"
 REPO_DIR="${REPO_DIR:-}"
+SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT:-4174}"
+SERVICE_HTTP_DIRECTORY="${SERVICE_HTTP_DIRECTORY:-}"
 
 XINITRC_TEMPLATE_B64="$(base64 "${XINITRC_TEMPLATE_FILE}" | tr -d '\n')"
 PROFILE_HOOK_TEMPLATE_B64="$(base64 "${PROFILE_HOOK_TEMPLATE_FILE}" | tr -d '\n')"
@@ -63,6 +65,8 @@ WAIT_URL="${WAIT_URL:-${APP_URL}}"
 FORCE="${FORCE:-0}"
 REPO_URL="${REPO_URL:-https://github.com/parsehex/ParseBox.rPi.git}"
 REPO_DIR="${REPO_DIR:-${HOME}/ParseBox.rPi}"
+SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT:-4174}"
+SERVICE_HTTP_DIRECTORY="${SERVICE_HTTP_DIRECTORY:-${REPO_DIR}/kiosk}"
 
 if [[ "${EUID}" -eq 0 ]]; then
   echo "Remote user is root. Use a normal user account for kiosk profile setup."
@@ -75,7 +79,8 @@ escape_sed_replacement() {
 
 APP_URL_ESC="$(escape_sed_replacement "${APP_URL}")"
 WAIT_URL_ESC="$(escape_sed_replacement "${WAIT_URL}")"
-REPO_DIR_ESC="$(escape_sed_replacement "${REPO_DIR}")"
+SERVICE_HTTP_PORT_ESC="$(escape_sed_replacement "${SERVICE_HTTP_PORT}")"
+SERVICE_HTTP_DIRECTORY_ESC="$(escape_sed_replacement "${SERVICE_HTTP_DIRECTORY}")"
 
 echo "[0/3] Cloning repo"
 if [[ -d "${REPO_DIR}/.git" ]]; then
@@ -89,7 +94,7 @@ echo "[0/3] Installing kiosk server systemd unit"
 SERVICE_FILE="${HOME}/.config/systemd/user/parsebox-kiosk.service"
 mkdir -p "$(dirname "${SERVICE_FILE}")"
 printf '%s' "${SERVICE_TEMPLATE_B64}" | base64 -d \
-  | sed -e "s|__REPO_DIR__|${REPO_DIR_ESC}|g" >"${SERVICE_FILE}"
+  | sed -e "s|__SERVICE_HTTP_PORT__|${SERVICE_HTTP_PORT_ESC}|g" -e "s|__SERVICE_HTTP_DIRECTORY__|${SERVICE_HTTP_DIRECTORY_ESC}|g" >"${SERVICE_FILE}"
 
 systemctl --user daemon-reload
 systemctl --user enable --now parsebox-kiosk.service
@@ -122,9 +127,11 @@ chmod +x "${XINITRC_FILE}"
 
 echo
 echo "Kiosk user setup complete."
+echo "HTTP service directory: ${SERVICE_HTTP_DIRECTORY}"
+echo "HTTP service port: ${SERVICE_HTTP_PORT}"
 echo "To disable kiosk temporarily: touch ~/.no-kiosk"
 REMOTE_SCRIPT
 )"
 
-REMOTE_RUNNER="APP_URL=${APP_URL@Q} WAIT_URL=${WAIT_URL@Q} FORCE=${FORCE@Q} REPO_URL=${REPO_URL@Q} REPO_DIR=${REPO_DIR@Q} XINITRC_TEMPLATE_B64=${XINITRC_TEMPLATE_B64@Q} PROFILE_HOOK_TEMPLATE_B64=${PROFILE_HOOK_TEMPLATE_B64@Q} SERVICE_TEMPLATE_B64=${SERVICE_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
+REMOTE_RUNNER="APP_URL=${APP_URL@Q} WAIT_URL=${WAIT_URL@Q} FORCE=${FORCE@Q} REPO_URL=${REPO_URL@Q} REPO_DIR=${REPO_DIR@Q} SERVICE_HTTP_PORT=${SERVICE_HTTP_PORT@Q} SERVICE_HTTP_DIRECTORY=${SERVICE_HTTP_DIRECTORY@Q} XINITRC_TEMPLATE_B64=${XINITRC_TEMPLATE_B64@Q} PROFILE_HOOK_TEMPLATE_B64=${PROFILE_HOOK_TEMPLATE_B64@Q} SERVICE_TEMPLATE_B64=${SERVICE_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
 ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "${REMOTE_RUNNER}"

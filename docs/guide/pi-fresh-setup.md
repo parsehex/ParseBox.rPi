@@ -95,6 +95,62 @@ Set a custom app URL:
 PI_HOST=parsebox.local PI_USER=pi APP_URL=http://127.0.0.1:5000/ bash scripts/pi/setup-kiosk-user.sh
 ```
 
+## 4b) Install a target app repo (generic orchestration)
+
+Use this when you want ParseBox to install and wire a specific app repo, instead of manually setting `APP_URL`.
+
+```bash
+PI_HOST=parsebox.local PI_USER=pi bash scripts/pi/install-app.sh
+```
+
+Behavior:
+
+- prompts you to pick an app or repo URL
+- clones/pulls that repo on the Pi
+- if `.env.example` exists and `.env` is missing, creates `.env` automatically
+- prompts for missing `.env` values (empty entries) during install
+- runs repo-defined installer hooks when present, otherwise falls back to npm/static build heuristics
+- if splash is enabled on ParseBox, installs app splash from repo assets when present
+- auto-detects static output directory and configures kiosk HTTP service + Chromium URL
+
+Repo installer hook lookup order:
+
+- `parsebox/install.sh`
+- `scripts/parsebox-install.sh`
+- `scripts/pi/install.sh`
+
+Repo splash asset lookup order (only when ParseBox splash is enabled):
+
+- `parsebox/splash.svg`
+- `parsebox/splash.png`
+- `parsebox/splash.webp`
+- `parsebox/splash.jpg`
+- `parsebox/splash.jpeg`
+
+## 4c) Enable ParseBox boot splash (optional but recommended)
+
+This installs and configures Plymouth on the Pi, sets a default ParseBox splash theme for fb1, and writes an enable marker used by `install-app.sh` to decide whether app splash hooks should run.
+
+Run from your workstation:
+
+```bash
+PI_HOST=parsebox.local PI_USER=pi bash scripts/pi/setup-splash.sh
+```
+
+Optional values:
+
+```bash
+PI_HOST=parsebox.local PI_USER=pi THEME_ID=parsebox FRAMEBUFFER=/dev/fb1 bash scripts/pi/setup-splash.sh
+```
+
+Enable marker written on the Pi:
+
+```text
+/etc/parsebox/splash-enabled
+```
+
+If this marker exists, app installs can apply repo-provided splash hooks automatically.
+
 ## 5) Reboot and validate
 
 ```bash

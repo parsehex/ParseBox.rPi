@@ -3,7 +3,7 @@ Description=ParseBox kiosk HTTP server
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 -m http.server 4174 --directory __REPO_DIR__/kiosk
+ExecStart=/usr/bin/python3 -m http.server __SERVICE_HTTP_PORT__ --directory __SERVICE_HTTP_DIRECTORY__
 Restart=on-failure
 
 [Install]
