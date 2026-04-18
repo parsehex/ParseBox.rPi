@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATE_DIR="${SCRIPT_DIR}/templates"
+XORG_FBDEV_TEMPLATE_FILE="${TEMPLATE_DIR}/xorg.99-fbdev.conf"
+XORG_TOUCH_TEMPLATE_FILE="${TEMPLATE_DIR}/xorg.98-touch-calibration.conf.template"
+
 PI_HOST="${PI_HOST:-raspberrypi}"
 PI_USER="${PI_USER:-user}"
 PI_PORT="${PI_PORT:-22}"
@@ -17,11 +22,24 @@ if ! command -v ssh >/dev/null 2>&1; then
   exit 1
 fi
 
+for template_file in \
+  "${XORG_FBDEV_TEMPLATE_FILE}" \
+  "${XORG_TOUCH_TEMPLATE_FILE}"
+do
+  if [[ ! -f "${template_file}" ]]; then
+    echo "Missing template file: ${template_file}"
+    exit 1
+  fi
+done
+
 ENABLE_TTY_AUTOLOGIN="${ENABLE_TTY_AUTOLOGIN:-1}"
 INSTALL_NODE="${INSTALL_NODE:-1}"
 ENABLE_FBCON_MAP="${ENABLE_FBCON_MAP:-1}"
 NODE_CHANNEL="${NODE_CHANNEL:-lts}"
 TOUCH_CALIBRATION_MATRIX="${TOUCH_CALIBRATION_MATRIX:-1 0 0 0 -1 1 0 0 1}"
+
+XORG_FBDEV_TEMPLATE_B64="$(base64 "${XORG_FBDEV_TEMPLATE_FILE}" | tr -d '\n')"
+XORG_TOUCH_TEMPLATE_B64="$(base64 "${XORG_TOUCH_TEMPLATE_FILE}" | tr -d '\n')"
 
 TARGET="${PI_USER}@${PI_HOST}"
 
@@ -42,6 +60,12 @@ INSTALL_NODE="${INSTALL_NODE:-1}"
 ENABLE_FBCON_MAP="${ENABLE_FBCON_MAP:-0}"
 NODE_CHANNEL="${NODE_CHANNEL:-lts}"
 TOUCH_CALIBRATION_MATRIX="${TOUCH_CALIBRATION_MATRIX:-1 0 0 0 -1 1 0 0 1}"
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
+}
+
+TOUCH_CALIBRATION_MATRIX_ESC="$(escape_sed_replacement "${TOUCH_CALIBRATION_MATRIX}")"
 
 BOOT_CONFIG_FILE=""
 for candidate in /boot/firmware/config.txt; do
@@ -100,27 +124,9 @@ fi
 echo "[4/6] Writing Xorg and touch configs"
 mkdir -p /etc/X11/xorg.conf.d
 
-cat >/etc/X11/xorg.conf.d/99-fbdev.conf <<'EOF'
-Section "Device"
-  Identifier "SPI Display"
-  Driver "fbdev"
-  Option "fbdev" "/dev/fb1"
-EndSection
-
-Section "Screen"
-  Identifier "Screen0"
-  Device "SPI Display"
-EndSection
-EOF
-
-cat >/etc/X11/xorg.conf.d/98-touch-calibration.conf <<EOF
-Section "InputClass"
-  Identifier "Touchscreen calibration"
-  MatchIsTouchscreen "on"
-  Driver "libinput"
-  Option "CalibrationMatrix" "${TOUCH_CALIBRATION_MATRIX}"
-EndSection
-EOF
+printf '%s' "${XORG_FBDEV_TEMPLATE_B64}" | base64 -d >/etc/X11/xorg.conf.d/99-fbdev.conf
+printf '%s' "${XORG_TOUCH_TEMPLATE_B64}" | base64 -d \
+  | sed -e "s|__TOUCH_CALIBRATION_MATRIX__|${TOUCH_CALIBRATION_MATRIX_ESC}|g" >/etc/X11/xorg.conf.d/98-touch-calibration.conf
 
 echo "[5/6] Updating boot config"
 append_unique_line "${BOOT_CONFIG_FILE}" "dtparam=spi=on"
@@ -148,5 +154,5 @@ echo "  PI_HOST=<host> PI_USER=<user> bash scripts/pi/setup-kiosk-user.sh"
 REMOTE_SCRIPT
 )"
 
-REMOTE_RUNNER="sudo ENABLE_TTY_AUTOLOGIN=${ENABLE_TTY_AUTOLOGIN@Q} INSTALL_NODE=${INSTALL_NODE@Q} ENABLE_FBCON_MAP=${ENABLE_FBCON_MAP@Q} NODE_CHANNEL=${NODE_CHANNEL@Q} TOUCH_CALIBRATION_MATRIX=${TOUCH_CALIBRATION_MATRIX@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
+REMOTE_RUNNER="sudo ENABLE_TTY_AUTOLOGIN=${ENABLE_TTY_AUTOLOGIN@Q} INSTALL_NODE=${INSTALL_NODE@Q} ENABLE_FBCON_MAP=${ENABLE_FBCON_MAP@Q} NODE_CHANNEL=${NODE_CHANNEL@Q} TOUCH_CALIBRATION_MATRIX=${TOUCH_CALIBRATION_MATRIX@Q} XORG_FBDEV_TEMPLATE_B64=${XORG_FBDEV_TEMPLATE_B64@Q} XORG_TOUCH_TEMPLATE_B64=${XORG_TOUCH_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
 ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "${REMOTE_RUNNER}"

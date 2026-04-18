@@ -1,0 +1,6 @@
+Section "InputClass"
+  Identifier "Touchscreen calibration"
+  MatchIsTouchscreen "on"
+  Driver "libinput"
+  Option "CalibrationMatrix" "__TOUCH_CALIBRATION_MATRIX__"
+EndSection
