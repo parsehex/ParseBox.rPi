@@ -43,7 +43,6 @@ TOUCH_CALIBRATION_MATRIX="${TOUCH_CALIBRATION_MATRIX:-1 0 0 0 -1 1 0 0 1}"
 
 XORG_FBDEV_TEMPLATE_B64="$(base64 "${XORG_FBDEV_TEMPLATE_FILE}" | tr -d '\n')"
 XORG_TOUCH_TEMPLATE_B64="$(base64 "${XORG_TOUCH_TEMPLATE_FILE}" | tr -d '\n')"
-RESTART_FB_IMAGE_TEMPLATE_B64="$(base64 "${RESTART_FB_IMAGE_TEMPLATE_FILE}" | tr -d '\n')"
 
 TARGET="${PI_USER}@${PI_HOST}"
 
@@ -66,6 +65,7 @@ ENABLE_CLEAR_FB_SHUTDOWN="${ENABLE_CLEAR_FB_SHUTDOWN:-1}"
 NODE_CHANNEL="${NODE_CHANNEL:-lts}"
 TOUCH_CALIBRATION_MATRIX="${TOUCH_CALIBRATION_MATRIX:-1 0 0 0 -1 1 0 0 1}"
 RESTART_FB_IMAGE_FILE="/usr/local/share/parsebox/restarting.480x320.rgb565le.raw"
+RESTART_FB_IMAGE_SOURCE_FILE="/tmp/parsebox/restarting.480x320.rgb565le.raw"
 
 escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
@@ -145,7 +145,11 @@ fi
 echo "[6/7] Installing framebuffer clear-on-shutdown service"
 if [[ "${ENABLE_CLEAR_FB_SHUTDOWN}" == "1" ]]; then
   mkdir -p /usr/local/share/parsebox
-  printf '%s' "${RESTART_FB_IMAGE_TEMPLATE_B64}" | base64 -d >"${RESTART_FB_IMAGE_FILE}"
+  if [[ -r "${RESTART_FB_IMAGE_SOURCE_FILE}" ]]; then
+    cp "${RESTART_FB_IMAGE_SOURCE_FILE}" "${RESTART_FB_IMAGE_FILE}"
+  else
+    echo "Warning: restart framebuffer image source missing at ${RESTART_FB_IMAGE_SOURCE_FILE}; using zero clear fallback."
+  fi
 
   cat >/usr/local/bin/clear-fb1.sh <<'EOF'
 #!/usr/bin/env sh
@@ -205,5 +209,10 @@ echo "  PI_HOST=<host> PI_USER=<user> bash scripts/pi/setup-kiosk-user.sh"
 REMOTE_SCRIPT
 )"
 
-REMOTE_RUNNER="sudo ENABLE_TTY_AUTOLOGIN=${ENABLE_TTY_AUTOLOGIN@Q} INSTALL_NODE=${INSTALL_NODE@Q} ENABLE_FBCON_MAP=${ENABLE_FBCON_MAP@Q} ENABLE_CLEAR_FB_SHUTDOWN=${ENABLE_CLEAR_FB_SHUTDOWN@Q} NODE_CHANNEL=${NODE_CHANNEL@Q} TOUCH_CALIBRATION_MATRIX=${TOUCH_CALIBRATION_MATRIX@Q} XORG_FBDEV_TEMPLATE_B64=${XORG_FBDEV_TEMPLATE_B64@Q} XORG_TOUCH_TEMPLATE_B64=${XORG_TOUCH_TEMPLATE_B64@Q} RESTART_FB_IMAGE_TEMPLATE_B64=${RESTART_FB_IMAGE_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
+if [[ "${ENABLE_CLEAR_FB_SHUTDOWN}" == "1" ]]; then
+  echo "Uploading restart framebuffer template"
+  cat "${RESTART_FB_IMAGE_TEMPLATE_FILE}" | ssh -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "mkdir -p /tmp/parsebox && cat > /tmp/parsebox/restarting.480x320.rgb565le.raw"
+fi
+
+REMOTE_RUNNER="sudo ENABLE_TTY_AUTOLOGIN=${ENABLE_TTY_AUTOLOGIN@Q} INSTALL_NODE=${INSTALL_NODE@Q} ENABLE_FBCON_MAP=${ENABLE_FBCON_MAP@Q} ENABLE_CLEAR_FB_SHUTDOWN=${ENABLE_CLEAR_FB_SHUTDOWN@Q} NODE_CHANNEL=${NODE_CHANNEL@Q} TOUCH_CALIBRATION_MATRIX=${TOUCH_CALIBRATION_MATRIX@Q} XORG_FBDEV_TEMPLATE_B64=${XORG_FBDEV_TEMPLATE_B64@Q} XORG_TOUCH_TEMPLATE_B64=${XORG_TOUCH_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
 ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "${REMOTE_RUNNER}"

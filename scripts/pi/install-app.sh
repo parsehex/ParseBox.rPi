@@ -245,11 +245,6 @@ if [[ "${run_repo_installer}" -eq 0 ]]; then
     fi
 
     if node -e 'const p=require("./package.json");process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
-			# if .env exists then source it
-			if [[ -f ".env" ]]; then
-				# shellcheck disable=SC1090
-				source .env
-			fi
       npm run build
     fi
   fi
