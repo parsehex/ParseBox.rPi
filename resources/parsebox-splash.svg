@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="384" viewBox="0 0 640 384" role="img" aria-label="ParsePlayer splash">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e2328" />
+      <stop offset="100%" stop-color="#0d1013" />
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .name { font-family: 'VT323', "Courier New", monospace; fill: #f4f7f9; letter-spacing: 3px; }
+      .sub { font-family: "VT323", "Courier New", monospace; fill: #cdd3d8; letter-spacing: 3px; }
+    </style>
+  </defs>
+
+  <rect width="640" height="384" fill="url(#bg)" />
+
+  <text x="320" y="196" text-anchor="middle" class="name" font-size="58"><tspan font-size="80">P</tspan>ARSE<tspan font-size="80">B</tspan>OX</text>
+  <text x="320" y="234" text-anchor="middle" class="sub" font-size="24">Raspberry Pi Kiosk Software</text>
+</svg>

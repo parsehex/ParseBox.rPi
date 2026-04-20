@@ -11,6 +11,11 @@ THEME_NAME="${THEME_NAME:-ParseBox}"
 FRAMEBUFFER="${FRAMEBUFFER:-/dev/fb1}"
 MARKER_FILE="${MARKER_FILE:-/etc/parsebox/splash-enabled}"
 HELPER_BIN="${HELPER_BIN:-/usr/local/bin/parsebox-install-plymouth-theme}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+LOCAL_SPLASH_PNG_DEFAULT="${REPO_ROOT}/resources/parsebox-splash.png"
+LOCAL_SPLASH_SVG_DEFAULT="${REPO_ROOT}/resources/parsebox-splash.svg"
+LOCAL_SPLASH_ASSET="${LOCAL_SPLASH_ASSET:-}"
 
 if [[ -z "${PI_HOST}" ]]; then
   echo "Set PI_HOST. Example: PI_HOST=raspberrypi.local bash scripts/pi/setup-splash.sh"
@@ -22,7 +27,33 @@ if ! command -v ssh >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v scp >/dev/null 2>&1; then
+  echo "scp is required on the local machine."
+  exit 1
+fi
+
+if [[ -z "${LOCAL_SPLASH_ASSET}" ]]; then
+  if [[ -f "${LOCAL_SPLASH_PNG_DEFAULT}" ]]; then
+    LOCAL_SPLASH_ASSET="${LOCAL_SPLASH_PNG_DEFAULT}"
+  elif [[ -f "${LOCAL_SPLASH_SVG_DEFAULT}" ]]; then
+    LOCAL_SPLASH_ASSET="${LOCAL_SPLASH_SVG_DEFAULT}"
+  else
+    echo "No local splash asset found. Expected one of:"
+    echo "  ${LOCAL_SPLASH_PNG_DEFAULT}"
+    echo "  ${LOCAL_SPLASH_SVG_DEFAULT}"
+    echo "You can override with LOCAL_SPLASH_ASSET=/path/to/splash.(svg|png)."
+    exit 1
+  fi
+fi
+
+if [[ ! -f "${LOCAL_SPLASH_ASSET}" ]]; then
+  echo "Local splash asset not found: ${LOCAL_SPLASH_ASSET}"
+  exit 1
+fi
+
 TARGET="${PI_USER}@${PI_HOST}"
+LOCAL_SPLASH_EXT="${LOCAL_SPLASH_ASSET##*.}"
+REMOTE_SPLASH_ASSET="/tmp/${THEME_ID}-splash.${LOCAL_SPLASH_EXT}"
 
 if [[ -n "${SSH_OPTS}" ]]; then
   # shellcheck disable=SC2206
@@ -30,6 +61,9 @@ if [[ -n "${SSH_OPTS}" ]]; then
 else
   EXTRA_SSH_OPTS=()
 fi
+
+echo "Copying splash asset to ${TARGET}:${REMOTE_SPLASH_ASSET}"
+scp -P "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${LOCAL_SPLASH_ASSET}" "${TARGET}:${REMOTE_SPLASH_ASSET}"
 
 echo "Running remote splash setup on ${TARGET}:${PI_PORT}"
 
@@ -41,6 +75,7 @@ THEME_NAME="${THEME_NAME:-ParseBox}"
 FRAMEBUFFER="${FRAMEBUFFER:-/dev/fb1}"
 MARKER_FILE="${MARKER_FILE:-/etc/parsebox/splash-enabled}"
 HELPER_BIN="${HELPER_BIN:-/usr/local/bin/parsebox-install-plymouth-theme}"
+IMAGE_FILE="${IMAGE_FILE:-}"
 
 append_cmdline_token() {
   local cmdline_file="$1"
@@ -52,7 +87,7 @@ append_cmdline_token() {
 
 echo "[1/5] Installing splash dependencies"
 apt update
-apt install -y plymouth plymouth-themes imagemagick librsvg2-bin initramfs-tools
+apt install -y plymouth plymouth-themes librsvg2-bin initramfs-tools
 
 echo "[2/5] Installing ParseBox Plymouth helper"
 cat >"${HELPER_BIN}" <<'HELPER_SCRIPT'
@@ -195,25 +230,24 @@ HELPER_SCRIPT
 
 chmod +x "${HELPER_BIN}"
 
-echo "[3/5] Building ParseBox splash image"
-TMP_SPLASH_PNG="$(mktemp /tmp/parsebox-splash.XXXXXX.png)"
-convert -size 480x320 gradient:'#0c4a6e-#111827' \
-  -fill '#f8fafc' -gravity center -pointsize 54 -annotate +0-12 'ParseBox' \
-  -fill '#bae6fd' -pointsize 20 -annotate +0+50 'Raspberry Pi Kiosk' \
-  "${TMP_SPLASH_PNG}"
+echo "[3/5] Preparing ParseBox splash image"
+if [[ -z "${IMAGE_FILE}" || ! -f "${IMAGE_FILE}" ]]; then
+  echo "Splash asset not found on remote host: ${IMAGE_FILE}"
+  exit 1
+fi
 
 echo "[4/5] Installing ParseBox splash theme"
 "${HELPER_BIN}" \
   --theme-id "${THEME_ID}" \
   --theme-name "${THEME_NAME}" \
-  --image "${TMP_SPLASH_PNG}" \
+  --image "${IMAGE_FILE}" \
   --framebuffer "${FRAMEBUFFER}" \
   --marker-file "${MARKER_FILE}"
-rm -f "${TMP_SPLASH_PNG}"
+rm -f "${IMAGE_FILE}"
 
 echo "[5/5] Splash setup complete (fbcon=map:10 removed if present)"
 REMOTE_SCRIPT
 )"
 
-REMOTE_RUNNER="sudo THEME_ID=${THEME_ID@Q} THEME_NAME=${THEME_NAME@Q} FRAMEBUFFER=${FRAMEBUFFER@Q} MARKER_FILE=${MARKER_FILE@Q} HELPER_BIN=${HELPER_BIN@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
+REMOTE_RUNNER="sudo THEME_ID=${THEME_ID@Q} THEME_NAME=${THEME_NAME@Q} FRAMEBUFFER=${FRAMEBUFFER@Q} MARKER_FILE=${MARKER_FILE@Q} HELPER_BIN=${HELPER_BIN@Q} IMAGE_FILE=${REMOTE_SPLASH_ASSET@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
 ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "${REMOTE_RUNNER}"

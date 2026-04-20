@@ -274,8 +274,8 @@ if [[ -f "${SPLASH_MARKER_FILE}" ]]; then
   app_theme_name="${APP_ID}"
 
   for candidate in \
-    "./parsebox/splash.svg" \
     "./parsebox/splash.png" \
+    "./parsebox/splash.svg" \
     "./parsebox/splash.webp" \
     "./parsebox/splash.jpg" \
     "./parsebox/splash.jpeg"
