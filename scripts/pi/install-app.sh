@@ -16,7 +16,7 @@ APP_REF="${APP_REF:-}"
 SPLASH_MARKER_FILE="${SPLASH_MARKER_FILE:-/etc/parsebox/splash-enabled}"
 RESTART_TTY_ON_UPDATE="${RESTART_TTY_ON_UPDATE:-1}"
 SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT:-4174}"
-WAIT_URL="${WAIT_URL:-http://127.0.0.1:${SERVICE_HTTP_PORT}/}"
+WAIT_URL="${WAIT_URL:-http://127.0.0.1:${SERVICE_HTTP_PORT}/health}"
 APP_URL="${APP_URL:-${WAIT_URL}}"
 FORCE="${FORCE:-0}"
 
@@ -349,8 +349,9 @@ fi
 
 if [[ -n "${APP_URL_PATH}" ]]; then
   APP_URL="http://127.0.0.1:${SERVICE_HTTP_PORT}${APP_URL_PATH}"
-  WAIT_URL="${APP_URL}"
 fi
+
+WAIT_URL="http://127.0.0.1:${SERVICE_HTTP_PORT}/health"
 
 echo "Configuring kiosk user service and Chromium launch"
 PI_HOST="${PI_HOST}" \

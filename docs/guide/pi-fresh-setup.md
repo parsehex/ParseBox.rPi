@@ -51,6 +51,7 @@ The script handles:
 - system update + full upgrade
 - base package install
 - Node.js install (NodeSource LTS)
+- ParseBox power-control sudoers setup for kiosk user (`systemctl reboot/poweroff`)
 - Xorg framebuffer config for SPI display
 - touch calibration config
 - boot config updates (SPI + overlay)
@@ -68,6 +69,7 @@ Optional behavior flags:
 PI_HOST=parsebox.local PI_USER=pi ENABLE_FBCON_MAP=1 bash scripts/pi/setup-system.sh
 PI_HOST=parsebox.local PI_USER=pi INSTALL_NODE=0 bash scripts/pi/setup-system.sh
 PI_HOST=parsebox.local PI_USER=pi ENABLE_TTY_AUTOLOGIN=0 bash scripts/pi/setup-system.sh
+PI_HOST=parsebox.local PI_USER=pi ENABLE_PARSEBOX_POWER_CONTROLS=0 bash scripts/pi/setup-system.sh
 ```
 
 Optional remote options:
@@ -82,6 +84,7 @@ This script creates/updates:
 
 - `~/.profile` login hook for tty1 kiosk start
 - `~/.xinitrc` with Chromium kiosk launch
+- `~/.parsebox/config.json` runtime config consumed by ParseBox Node server
 
 Run from your workstation:
 
@@ -93,6 +96,12 @@ Set a custom app URL:
 
 ```bash
 PI_HOST=parsebox.local PI_USER=pi APP_URL=http://127.0.0.1:5000/ bash scripts/pi/setup-kiosk-user.sh
+```
+
+Set a custom ParseBox runtime config file path:
+
+```bash
+PI_HOST=parsebox.local PI_USER=pi PARSEBOX_CONFIG_FILE=/home/pi/.parsebox/config.json bash scripts/pi/setup-kiosk-user.sh
 ```
 
 ## 4b) Install a target app repo (generic orchestration)

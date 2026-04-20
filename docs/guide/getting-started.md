@@ -32,11 +32,12 @@ That guide walks through:
 
 ## 3) Validate kiosk output with this repo
 
-On the Pi, you can serve the local kiosk test page:
+On the Pi, you can start the ParseBox runtime server (Node v24, native TypeScript):
 
 ```bash
 cd /path/to/ParseBox.rPi
-python3 -m http.server 4174 --directory kiosk
+npm install
+npm run server:start
 ```
 
 Then point Chromium kiosk mode to:
@@ -52,3 +53,4 @@ Once this is stable, replace the target URL with your app service URL.
 - `npm run docs:dev` - run docs locally
 - `npm run docs:build` - build static docs output
 - `npm run docs:preview` - preview built docs output
+- `npm run server:start` - run ParseBox runtime server with home config (`~/.parsebox/config.json`)

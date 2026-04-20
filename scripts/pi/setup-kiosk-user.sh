@@ -35,12 +35,13 @@ do
 done
 
 APP_URL="${APP_URL:-http://127.0.0.1:4174/}"
-WAIT_URL="${WAIT_URL:-${APP_URL}}"
+WAIT_URL="${WAIT_URL:-http://127.0.0.1:4174/health}"
 FORCE="${FORCE:-0}"
 REPO_URL="${REPO_URL:-https://github.com/parsehex/ParseBox.rPi.git}"
 REPO_DIR="${REPO_DIR:-}"
 SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT:-4174}"
 SERVICE_HTTP_DIRECTORY="${SERVICE_HTTP_DIRECTORY:-}"
+PARSEBOX_CONFIG_FILE="${PARSEBOX_CONFIG_FILE:-}"
 
 XINITRC_TEMPLATE_B64="$(base64 "${XINITRC_TEMPLATE_FILE}" | tr -d '\n')"
 PROFILE_HOOK_TEMPLATE_B64="$(base64 "${PROFILE_HOOK_TEMPLATE_FILE}" | tr -d '\n')"
@@ -61,12 +62,13 @@ REMOTE_SCRIPT_B64="$(cat <<'REMOTE_SCRIPT' | base64 | tr -d '\n'
 set -euo pipefail
 
 APP_URL="${APP_URL:-http://127.0.0.1:4174/}"
-WAIT_URL="${WAIT_URL:-${APP_URL}}"
+WAIT_URL="${WAIT_URL:-http://127.0.0.1:4174/health}"
 FORCE="${FORCE:-0}"
 REPO_URL="${REPO_URL:-https://github.com/parsehex/ParseBox.rPi.git}"
 REPO_DIR="${REPO_DIR:-${HOME}/ParseBox.rPi}"
 SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT:-4174}"
 SERVICE_HTTP_DIRECTORY="${SERVICE_HTTP_DIRECTORY:-${REPO_DIR}/kiosk}"
+PARSEBOX_CONFIG_FILE="${PARSEBOX_CONFIG_FILE:-${HOME}/.parsebox/config.json}"
 
 if [[ "${EUID}" -eq 0 ]]; then
   echo "Remote user is root. Use a normal user account for kiosk profile setup."
@@ -77,10 +79,17 @@ escape_sed_replacement() {
   printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
 }
 
+escape_json_string() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
 APP_URL_ESC="$(escape_sed_replacement "${APP_URL}")"
 WAIT_URL_ESC="$(escape_sed_replacement "${WAIT_URL}")"
-SERVICE_HTTP_PORT_ESC="$(escape_sed_replacement "${SERVICE_HTTP_PORT}")"
-SERVICE_HTTP_DIRECTORY_ESC="$(escape_sed_replacement "${SERVICE_HTTP_DIRECTORY}")"
+SERVER_ENTRYPOINT="${REPO_DIR}/server/index.ts"
+SERVER_ENTRYPOINT_ESC="$(escape_sed_replacement "${SERVER_ENTRYPOINT}")"
+SERVER_CONFIG_ESC="$(escape_sed_replacement "${PARSEBOX_CONFIG_FILE}")"
+SERVICE_HTTP_DIRECTORY_JSON="$(escape_json_string "${SERVICE_HTTP_DIRECTORY}")"
+APP_URL_JSON="$(escape_json_string "${APP_URL}")"
 
 echo "[0/3] Cloning repo"
 if [[ -d "${REPO_DIR}/.git" ]]; then
@@ -90,11 +99,22 @@ else
   git clone "${REPO_URL}" "${REPO_DIR}"
 fi
 
+echo "[0/3] Writing ParseBox runtime config"
+mkdir -p "$(dirname "${PARSEBOX_CONFIG_FILE}")"
+cat >"${PARSEBOX_CONFIG_FILE}" <<EOF
+{
+  "port": ${SERVICE_HTTP_PORT},
+  "staticDir": "${SERVICE_HTTP_DIRECTORY_JSON}",
+  "appUrl": "${APP_URL_JSON}",
+  "allowOnlyLocalhostControl": true
+}
+EOF
+
 echo "[0/3] Installing kiosk server systemd unit"
 SERVICE_FILE="${HOME}/.config/systemd/user/parsebox-kiosk.service"
 mkdir -p "$(dirname "${SERVICE_FILE}")"
 printf '%s' "${SERVICE_TEMPLATE_B64}" | base64 -d \
-  | sed -e "s|__SERVICE_HTTP_PORT__|${SERVICE_HTTP_PORT_ESC}|g" -e "s|__SERVICE_HTTP_DIRECTORY__|${SERVICE_HTTP_DIRECTORY_ESC}|g" >"${SERVICE_FILE}"
+  | sed -e "s|__SERVER_ENTRYPOINT__|${SERVER_ENTRYPOINT_ESC}|g" -e "s|__SERVER_CONFIG__|${SERVER_CONFIG_ESC}|g" >"${SERVICE_FILE}"
 
 systemctl --user daemon-reload
 systemctl --user enable --now parsebox-kiosk.service
@@ -129,9 +149,10 @@ echo
 echo "Kiosk user setup complete."
 echo "HTTP service directory: ${SERVICE_HTTP_DIRECTORY}"
 echo "HTTP service port: ${SERVICE_HTTP_PORT}"
+echo "Runtime config file: ${PARSEBOX_CONFIG_FILE}"
 echo "To disable kiosk temporarily: touch ~/.no-kiosk"
 REMOTE_SCRIPT
 )"
 
-REMOTE_RUNNER="APP_URL=${APP_URL@Q} WAIT_URL=${WAIT_URL@Q} FORCE=${FORCE@Q} REPO_URL=${REPO_URL@Q} REPO_DIR=${REPO_DIR@Q} SERVICE_HTTP_PORT=${SERVICE_HTTP_PORT@Q} SERVICE_HTTP_DIRECTORY=${SERVICE_HTTP_DIRECTORY@Q} XINITRC_TEMPLATE_B64=${XINITRC_TEMPLATE_B64@Q} PROFILE_HOOK_TEMPLATE_B64=${PROFILE_HOOK_TEMPLATE_B64@Q} SERVICE_TEMPLATE_B64=${SERVICE_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
+REMOTE_RUNNER="APP_URL=${APP_URL@Q} WAIT_URL=${WAIT_URL@Q} FORCE=${FORCE@Q} REPO_URL=${REPO_URL@Q} REPO_DIR=${REPO_DIR@Q} SERVICE_HTTP_PORT=${SERVICE_HTTP_PORT@Q} SERVICE_HTTP_DIRECTORY=${SERVICE_HTTP_DIRECTORY@Q} PARSEBOX_CONFIG_FILE=${PARSEBOX_CONFIG_FILE@Q} XINITRC_TEMPLATE_B64=${XINITRC_TEMPLATE_B64@Q} PROFILE_HOOK_TEMPLATE_B64=${PROFILE_HOOK_TEMPLATE_B64@Q} SERVICE_TEMPLATE_B64=${SERVICE_TEMPLATE_B64@Q} bash -c \"printf %s ${REMOTE_SCRIPT_B64@Q} | base64 -d | bash\""
 ssh -tt -p "${PI_PORT}" "${EXTRA_SSH_OPTS[@]}" "${TARGET}" "${REMOTE_RUNNER}"
