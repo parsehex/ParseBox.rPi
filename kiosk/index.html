@@ -138,6 +138,13 @@
         padding: 0 0.75rem;
         font-size: 0.85rem;
       }
+      .app-update {
+        min-height: 2.1rem;
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
+        color: var(--ink);
+        background: linear-gradient(180deg, rgba(109, 148, 219, 0.55), rgba(44, 72, 132, 0.78));
+      }
     </style>
   </head>
   <body>
@@ -233,16 +240,30 @@
             label.append(current);
           }
 
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "app-switch";
-          button.textContent = app.id === currentAppId ? "Active" : "Switch";
-          button.disabled = app.id === currentAppId;
-          button.addEventListener("click", () => {
+          const switchButton = document.createElement("button");
+          switchButton.type = "button";
+          switchButton.className = "app-switch";
+          switchButton.textContent = app.id === currentAppId ? "Active" : "Switch";
+          switchButton.disabled = app.id === currentAppId;
+          switchButton.addEventListener("click", () => {
             void switchApp(app);
           });
 
-          row.append(label, button);
+          const updateButton = document.createElement("button");
+          updateButton.type = "button";
+          updateButton.className = "app-update";
+          updateButton.textContent = "Update";
+          updateButton.disabled = !app.repoDir;
+          updateButton.title = app.repoDir ? "Pull latest and rebuild" : "No repo dir recorded — reinstall to enable updates";
+          updateButton.addEventListener("click", () => {
+            void updateApp(app, updateButton, switchButton);
+          });
+
+          const buttons = document.createElement("div");
+          buttons.style.cssText = "display:flex;gap:0.4rem;";
+          buttons.append(updateButton, switchButton);
+
+          row.append(label, buttons);
           appsList.append(row);
         }
       }
@@ -261,6 +282,40 @@
           setStatus("Select an app target.");
         } catch (error) {
           setStatus(`Failed to load apps: ${String(error)}`, true);
+        }
+      }
+
+      async function updateApp(app, updateButton, switchButton) {
+        const confirmed = window.confirm(`Update ${app.name}? This will git pull and rebuild. May take a few minutes.`);
+        if (!confirmed) {
+          return;
+        }
+
+        setBusy(true);
+        updateButton.disabled = true;
+        switchButton.disabled = true;
+        setStatus(`Updating ${app.name}… this may take a minute.`);
+
+        try {
+          const response = await fetch("/api/apps/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ appId: app.id }),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(body.error ?? `Request failed with ${response.status}`);
+          }
+
+          const detail = body.built ? "rebuilt" : body.pulled ? "pulled (no build step)" : "already up to date";
+          setStatus(`${app.name} updated: ${detail}.`);
+        } catch (error) {
+          setStatus(`Failed to update ${app.name}: ${String(error)}`, true);
+        } finally {
+          setBusy(false);
+          updateButton.disabled = false;
+          switchButton.disabled = app.id === currentAppId;
         }
       }
 

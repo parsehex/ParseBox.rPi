@@ -332,6 +332,7 @@ cat >"${APP_METADATA_FILE}" <<EOF
 {
   "id": "${APP_THEME_ID}",
   "name": "${APP_DISPLAY_NAME}",
+  "repoDir": "${APP_REPO_DIR}",
   "staticDir": "${SERVE_DIR}",
   "appUrlPath": "${APP_URL_PATH}",
   "splashImage": "${APP_SPLASH_IMAGE}",

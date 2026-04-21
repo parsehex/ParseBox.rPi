@@ -18,6 +18,7 @@ type RuntimeConfig = {
 type AppTarget = {
   id: string;
   name: string;
+  repoDir?: string;
   staticDir: string;
   appUrl: string;
   appUrlPath: string;
@@ -207,6 +208,10 @@ async function listInstalledTargets(config: RuntimeConfig, configPath: string, r
         appUrlPath: normalizedPath,
       };
 
+      if (typeof parsed.repoDir === "string" && parsed.repoDir.trim()) {
+        target.repoDir = ensureAbsolutePath(parsed.repoDir);
+      }
+
       if (typeof parsed.splashImage === "string" && parsed.splashImage.trim()) {
         target.splashImage = ensureAbsolutePath(parsed.splashImage);
       }
@@ -307,6 +312,57 @@ async function rewriteXinitrcAppUrl(homeDir: string, appUrl: string): Promise<vo
   if (next !== current) {
     await writeFile(xinitrcPath, next, "utf8");
   }
+}
+
+function execFileAsync(cmd: string, args: string[], opts: { cwd?: string } = {}): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { cwd: opts.cwd, env: process.env }, (error, stdout, stderr) => {
+      if (error) {
+        const err = Object.assign(error, { stdout, stderr });
+        reject(err);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+  });
+}
+
+async function updateTarget(target: AppTarget): Promise<{ pulled: boolean; built: boolean; log: string[] }> {
+  const repoDir = target.repoDir;
+  if (!repoDir) {
+    throw new Error("No repoDir recorded for this app — reinstall to enable updates.");
+  }
+
+  if (!(await pathExists(join(repoDir, ".git")))) {
+    throw new Error(`Not a git repository: ${repoDir}`);
+  }
+
+  const log: string[] = [];
+
+  const pull = await execFileAsync("git", ["-C", repoDir, "pull", "--ff-only"]);
+  log.push(pull.stdout.trim());
+  const pulled = !pull.stdout.includes("Already up to date.");
+
+  const pkgPath = join(repoDir, "package.json");
+  let built = false;
+  if (await pathExists(pkgPath)) {
+    const pkgText = await readFile(pkgPath, "utf8");
+    const pkg = JSON.parse(pkgText) as Record<string, unknown>;
+    const scripts = pkg.scripts as Record<string, unknown> | undefined;
+
+    const lockExists = await pathExists(join(repoDir, "package-lock.json"));
+    const installCmd = lockExists ? ["ci"] : ["install"];
+    const install = await execFileAsync("npm", installCmd, { cwd: repoDir });
+    log.push(install.stdout.trim());
+
+    if (scripts && typeof scripts.build === "string") {
+      const build = await execFileAsync("npm", ["run", "build"], { cwd: repoDir });
+      log.push(build.stdout.trim());
+      built = true;
+    }
+  }
+
+  return { pulled, built, log };
 }
 
 async function maybeSwitchSplash(target: AppTarget): Promise<{ attempted: boolean; updated: boolean; warning?: string }> {
@@ -498,6 +554,42 @@ async function main(): Promise<void> {
         });
       } catch (error) {
         json(res, 500, { error: `Failed to switch target: ${String(error)}` });
+      }
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/apps/update") {
+      if (config.allowOnlyLocalhostControl && !isLocalhostAddress(req.socket.remoteAddress)) {
+        json(res, 403, { error: "Control endpoint is localhost-only." });
+        return;
+      }
+
+      let body: Record<string, unknown>;
+      try {
+        body = await parseRequestJson(req);
+      } catch {
+        json(res, 400, { error: "Invalid JSON body." });
+        return;
+      }
+
+      const appId = typeof body.appId === "string" ? slugify(body.appId) : "";
+      if (!appId) {
+        json(res, 400, { error: "appId is required." });
+        return;
+      }
+
+      const targets = await listInstalledTargets(config, configPath, rootDir);
+      const target = targets.find((entry) => entry.id === appId);
+      if (!target) {
+        json(res, 404, { error: `Unknown app target: ${appId}` });
+        return;
+      }
+
+      try {
+        const result = await updateTarget(target);
+        json(res, 200, { ok: true, appId: target.id, ...result });
+      } catch (error) {
+        json(res, 500, { error: `Failed to update: ${String(error)}` });
       }
       return;
     }
