@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 
 type RuntimeConfig = {
   port: number;
+  controlsPort: number;
   staticDir: string;
   appUrl?: string;
   currentAppId?: string;
@@ -25,6 +26,7 @@ type AppTarget = {
 };
 
 const DEFAULT_PORT = 4174;
+const DEFAULT_CONTROLS_PORT = 4175;
 const HEALTH_PATH = "/health";
 
 const MIME_TYPES: Record<string, string> = {
@@ -78,6 +80,7 @@ async function loadConfig(configPath: string): Promise<RuntimeConfig> {
   const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const defaults: RuntimeConfig = {
     port: DEFAULT_PORT,
+    controlsPort: DEFAULT_CONTROLS_PORT,
     staticDir: join(rootDir, "kiosk"),
     allowOnlyLocalhostControl: true,
   };
@@ -100,6 +103,10 @@ async function loadConfig(configPath: string): Promise<RuntimeConfig> {
 
   if (!Number.isInteger(merged.port) || merged.port < 1 || merged.port > 65535) {
     throw new Error(`Invalid port in config: ${merged.port}`);
+  }
+
+  if (!Number.isInteger(merged.controlsPort) || merged.controlsPort < 1 || merged.controlsPort > 65535) {
+    throw new Error(`Invalid controlsPort in config: ${merged.controlsPort}`);
   }
 
   if (typeof merged.staticDir !== "string" || merged.staticDir.trim().length === 0) {
@@ -409,14 +416,14 @@ async function serveStaticFile(root: string, pathname: string, res: ServerRespon
 async function main(): Promise<void> {
   const configPath = getConfigPath();
   const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
-  const config = await loadConfig(configPath);
+  let config = await loadConfig(configPath);
   const controlsPagePath = join(rootDir, "kiosk", "index.html");
 
   if (!(await pathExists(config.staticDir))) {
     throw new Error(`Static directory does not exist: ${config.staticDir}`);
   }
 
-  const server = createServer(async (req, res) => {
+  const handleRequest = (resolveStaticRoot: () => string) => async (req: IncomingMessage, res: ServerResponse) => {
     const method = req.method ?? "GET";
     const pathname = parsePathname(req);
 
@@ -482,6 +489,7 @@ async function main(): Promise<void> {
 
       try {
         const result = await switchTarget(target, configPath, config);
+        config = await loadConfig(configPath);
         json(res, 200, {
           ok: true,
           appId: target.id,
@@ -533,18 +541,31 @@ async function main(): Promise<void> {
       return;
     }
 
-    await serveStaticFile(config.staticDir, pathname, res);
-  });
+    await serveStaticFile(resolveStaticRoot(), pathname, res);
+  };
 
-  server.on("clientError", () => {
+  const appServer = createServer(handleRequest(() => config.staticDir));
+  const controlsServer =
+    config.controlsPort === config.port
+      ? null
+      : createServer(handleRequest(() => join(rootDir, "kiosk")));
+
+  appServer.on("clientError", () => {
     // Ignore malformed clients; kiosk networking can be noisy on boot.
   });
 
-  server.listen(config.port, "0.0.0.0", () => {
+  if (controlsServer) {
+    controlsServer.on("clientError", () => {
+      // Ignore malformed clients; kiosk networking can be noisy on boot.
+    });
+  }
+
+  appServer.listen(config.port, "0.0.0.0", () => {
     console.log(
       JSON.stringify({
         event: "parsebox-server-started",
         port: config.port,
+        controlsPort: config.controlsPort,
         staticDir: config.staticDir,
         controlsPagePath,
         configPath,
@@ -552,9 +573,28 @@ async function main(): Promise<void> {
     );
   });
 
+  if (controlsServer) {
+    controlsServer.listen(config.controlsPort, "0.0.0.0", () => {
+      console.log(
+        JSON.stringify({
+          event: "parsebox-controls-server-started",
+          controlsPort: config.controlsPort,
+          controlsPagePath,
+        }),
+      );
+    });
+  }
+
   const shutdown = () => {
-    server.close(() => {
-      process.exit(0);
+    appServer.close(() => {
+      if (!controlsServer) {
+        process.exit(0);
+        return;
+      }
+
+      controlsServer.close(() => {
+        process.exit(0);
+      });
     });
   };
 
