@@ -56,6 +56,9 @@
         grid-template-columns: 1fr 1fr;
         gap: 0.75rem;
       }
+      .secondary-controls {
+        margin-top: 0.75rem;
+      }
       button {
         border: 0;
         border-radius: 12px;
@@ -74,6 +77,11 @@
         filter: grayscale(0.15) brightness(0.75);
         cursor: wait;
       }
+      button.secondary {
+        width: 100%;
+        color: var(--ink);
+        background: linear-gradient(180deg, rgba(109, 148, 219, 0.55), rgba(44, 72, 132, 0.78));
+      }
       .status {
         min-height: 1.5rem;
         margin-top: 0.8rem;
@@ -83,6 +91,51 @@
       }
       .status.error {
         color: #ffd1d1;
+      }
+      .apps-panel {
+        margin-top: 1rem;
+        text-align: left;
+        border-radius: 12px;
+        border: 1px solid rgba(173, 206, 255, 0.22);
+        padding: 0.75rem;
+        background: rgba(10, 20, 36, 0.45);
+      }
+      .apps-panel[hidden] {
+        display: none;
+      }
+      .apps-title {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+        color: var(--ink-dim);
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+      .apps-list {
+        display: grid;
+        gap: 0.5rem;
+      }
+      .app-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 10px;
+        border: 1px solid rgba(160, 201, 255, 0.2);
+        padding: 0.5rem;
+        background: rgba(7, 16, 30, 0.55);
+      }
+      .app-name {
+        font-size: 0.95rem;
+        color: var(--ink);
+      }
+      .app-current {
+        font-size: 0.8rem;
+        color: #96ffd6;
+      }
+      .app-switch {
+        min-height: 2.1rem;
+        padding: 0 0.75rem;
+        font-size: 0.85rem;
       }
     </style>
   </head>
@@ -94,16 +147,28 @@
         <button id="rebootButton" type="button">Reboot</button>
         <button id="shutdownButton" class="danger" type="button">Shutdown</button>
       </section>
+      <section class="secondary-controls" aria-label="App controls">
+        <button id="appsButton" class="secondary" type="button">Apps</button>
+      </section>
+      <section id="appsPanel" class="apps-panel" hidden>
+        <h2 class="apps-title">Switch App</h2>
+        <div id="appsList" class="apps-list"></div>
+      </section>
       <p id="status" class="status" role="status" aria-live="polite">Ready.</p>
     </main>
     <script type="module">
       const rebootButton = document.getElementById("rebootButton");
       const shutdownButton = document.getElementById("shutdownButton");
+      const appsButton = document.getElementById("appsButton");
+      const appsPanel = document.getElementById("appsPanel");
+      const appsList = document.getElementById("appsList");
       const status = document.getElementById("status");
+      let currentAppId = null;
 
       function setBusy(busy) {
         rebootButton.disabled = busy;
         shutdownButton.disabled = busy;
+        appsButton.disabled = busy;
       }
 
       function setStatus(message, isError = false) {
@@ -139,12 +204,110 @@
         }
       }
 
+      function renderAppList(apps) {
+        appsList.innerHTML = "";
+
+        if (!apps.length) {
+          const empty = document.createElement("p");
+          empty.className = "status";
+          empty.textContent = "No switchable apps found.";
+          appsList.append(empty);
+          return;
+        }
+
+        for (const app of apps) {
+          const row = document.createElement("div");
+          row.className = "app-item";
+
+          const label = document.createElement("div");
+          const title = document.createElement("div");
+          title.className = "app-name";
+          title.textContent = app.name;
+          label.append(title);
+
+          if (app.id === currentAppId) {
+            const current = document.createElement("div");
+            current.className = "app-current";
+            current.textContent = "Current";
+            label.append(current);
+          }
+
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "app-switch";
+          button.textContent = app.id === currentAppId ? "Active" : "Switch";
+          button.disabled = app.id === currentAppId;
+          button.addEventListener("click", () => {
+            void switchApp(app);
+          });
+
+          row.append(label, button);
+          appsList.append(row);
+        }
+      }
+
+      async function loadApps() {
+        setStatus("Loading apps...");
+        try {
+          const response = await fetch("/api/apps", { method: "GET" });
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(body.error ?? `Failed with ${response.status}`);
+          }
+
+          currentAppId = body.currentAppId;
+          renderAppList(Array.isArray(body.apps) ? body.apps : []);
+          setStatus("Select an app target.");
+        } catch (error) {
+          setStatus(`Failed to load apps: ${String(error)}`, true);
+        }
+      }
+
+      async function switchApp(app) {
+        const confirmed = window.confirm(`Switch to ${app.name}? This restarts the kiosk session.`);
+        if (!confirmed) {
+          return;
+        }
+
+        setBusy(true);
+        setStatus(`Switching to ${app.name}...`);
+
+        try {
+          const response = await fetch("/api/apps/switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ appId: app.id }),
+          });
+
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(body.error ?? `Request failed with ${response.status}`);
+          }
+
+          const splashState = body.splash?.updated
+            ? "Splash updated."
+            : body.splash?.warning ?? "Switch complete.";
+          setStatus(`${app.name} selected. ${splashState}`);
+        } catch (error) {
+          setStatus(`Failed to switch app: ${String(error)}`, true);
+          setBusy(false);
+        }
+      }
+
       rebootButton.addEventListener("click", () => {
         void sendPowerAction("reboot");
       });
 
       shutdownButton.addEventListener("click", () => {
         void sendPowerAction("shutdown");
+      });
+
+      appsButton.addEventListener("click", () => {
+        const isHidden = appsPanel.hidden;
+        appsPanel.hidden = !isHidden;
+        if (isHidden) {
+          void loadApps();
+        }
       });
     </script>
   </body>

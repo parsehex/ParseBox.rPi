@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { extname, join, normalize, resolve } from "node:path";
+import { dirname, extname, join, normalize, resolve } from "node:path";
 import { argv, cwd } from "node:process";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -10,7 +10,18 @@ type RuntimeConfig = {
   port: number;
   staticDir: string;
   appUrl?: string;
+  currentAppId?: string;
   allowOnlyLocalhostControl: boolean;
+};
+
+type AppTarget = {
+  id: string;
+  name: string;
+  staticDir: string;
+  appUrl: string;
+  appUrlPath: string;
+  splashImage?: string;
+  splashThemeId?: string;
 };
 
 const DEFAULT_PORT = 4174;
@@ -99,10 +110,109 @@ async function loadConfig(configPath: string): Promise<RuntimeConfig> {
     throw new Error("Invalid allowOnlyLocalhostControl in config.");
   }
 
+  if (merged.currentAppId !== undefined && typeof merged.currentAppId !== "string") {
+    throw new Error("Invalid currentAppId in config.");
+  }
+
   return {
     ...merged,
     staticDir: resolve(merged.staticDir),
   };
+}
+
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function getHomeDir(configPath: string): string {
+  return dirname(dirname(configPath));
+}
+
+function configPathForHome(homeDir: string): string {
+  return join(homeDir, ".parsebox", "config.json");
+}
+
+function ensureAbsolutePath(pathname: string): string {
+  return resolve(pathname);
+}
+
+async function parseJsonFile(pathname: string): Promise<Record<string, unknown> | null> {
+  try {
+    const text = await readFile(pathname, "utf8");
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function listInstalledTargets(config: RuntimeConfig, configPath: string, rootDir: string): Promise<AppTarget[]> {
+  const homeDir = getHomeDir(configPath);
+  const metadataDir = join(homeDir, ".parsebox", "apps");
+  const appUrlBase = `http://127.0.0.1:${config.port}`;
+  const targets = new Map<string, AppTarget>();
+
+  const parseboxTarget: AppTarget = {
+    id: "parsebox-kiosk",
+    name: "ParseBox Kiosk",
+    staticDir: join(rootDir, "kiosk"),
+    appUrl: `${appUrlBase}/`,
+    appUrlPath: "/",
+    splashImage: join(rootDir, "resources", "parsebox-splash.svg"),
+    splashThemeId: "parsebox",
+  };
+  targets.set(parseboxTarget.id, parseboxTarget);
+
+  if (await pathExists(metadataDir)) {
+    const entries = await readdir(metadataDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) {
+        continue;
+      }
+
+      const parsed = await parseJsonFile(join(metadataDir, entry.name));
+      if (!parsed) {
+        continue;
+      }
+
+      const id = typeof parsed.id === "string" ? slugify(parsed.id) : slugify(entry.name.replace(/\.json$/, ""));
+      const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : id;
+      const staticDirRaw = typeof parsed.staticDir === "string" ? parsed.staticDir : "";
+      if (!staticDirRaw) {
+        continue;
+      }
+
+      const appUrlPath =
+        typeof parsed.appUrlPath === "string" && parsed.appUrlPath.trim()
+          ? parsed.appUrlPath
+          : "/";
+      const normalizedPath = appUrlPath.startsWith("/") ? appUrlPath : `/${appUrlPath}`;
+
+      const target: AppTarget = {
+        id,
+        name,
+        staticDir: ensureAbsolutePath(staticDirRaw),
+        appUrl: `${appUrlBase}${normalizedPath}`,
+        appUrlPath: normalizedPath,
+      };
+
+      if (typeof parsed.splashImage === "string" && parsed.splashImage.trim()) {
+        target.splashImage = ensureAbsolutePath(parsed.splashImage);
+      }
+
+      if (typeof parsed.splashThemeId === "string" && parsed.splashThemeId.trim()) {
+        target.splashThemeId = slugify(parsed.splashThemeId);
+      }
+
+      targets.set(target.id, target);
+    }
+  }
+
+  return [...targets.values()];
 }
 
 function json(res: ServerResponse, statusCode: number, payload: Record<string, unknown>): void {
@@ -136,6 +246,109 @@ function runPowerCommand(command: "reboot" | "poweroff"): Promise<void> {
       resolvePromise();
     });
   });
+}
+
+function runSudoCommand(command: string, args: string[]): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    execFile("/usr/bin/sudo", [command, ...args], (error) => {
+      if (error) {
+        rejectPromise(error);
+        return;
+      }
+
+      resolvePromise();
+    });
+  });
+}
+
+function readRequestBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => {
+      chunks.push(Buffer.from(chunk));
+    });
+    req.on("end", () => {
+      resolvePromise(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", (error) => {
+      rejectPromise(error);
+    });
+  });
+}
+
+async function parseRequestJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const body = await readRequestBody(req);
+  if (!body.trim()) {
+    return {};
+  }
+
+  return JSON.parse(body) as Record<string, unknown>;
+}
+
+async function writeRuntimeConfig(configPath: string, config: RuntimeConfig): Promise<void> {
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function rewriteXinitrcAppUrl(homeDir: string, appUrl: string): Promise<void> {
+  const xinitrcPath = join(homeDir, ".xinitrc");
+  if (!(await pathExists(xinitrcPath))) {
+    return;
+  }
+
+  const current = await readFile(xinitrcPath, "utf8");
+  const next = current.replace(/--app="[^"]+"/g, `--app="${appUrl}"`);
+  if (next !== current) {
+    await writeFile(xinitrcPath, next, "utf8");
+  }
+}
+
+async function maybeSwitchSplash(target: AppTarget): Promise<{ attempted: boolean; updated: boolean; warning?: string }> {
+  const markerFile = "/etc/parsebox/splash-enabled";
+  const helperPath = "/usr/local/bin/parsebox-install-plymouth-theme";
+
+  if (!(await pathExists(markerFile))) {
+    return { attempted: false, updated: false, warning: "Splash marker is not enabled." };
+  }
+
+  if (!(await pathExists(helperPath))) {
+    return { attempted: false, updated: false, warning: "Splash helper is missing." };
+  }
+
+  if (!target.splashImage || !(await pathExists(target.splashImage))) {
+    return { attempted: true, updated: false, warning: "Selected target has no splash asset." };
+  }
+
+  try {
+    await runSudoCommand(helperPath, [
+      "--theme-id",
+      target.splashThemeId ?? target.id,
+      "--theme-name",
+      target.name,
+      "--image",
+      target.splashImage,
+      "--marker-file",
+      markerFile,
+    ]);
+    return { attempted: true, updated: true };
+  } catch (error) {
+    return { attempted: true, updated: false, warning: `Failed to update splash: ${String(error)}` };
+  }
+}
+
+async function switchTarget(target: AppTarget, configPath: string, current: RuntimeConfig): Promise<{ splash: { attempted: boolean; updated: boolean; warning?: string } }> {
+  const homeDir = getHomeDir(configPath);
+  const nextConfig: RuntimeConfig = {
+    ...current,
+    staticDir: target.staticDir,
+    appUrl: target.appUrl,
+    currentAppId: target.id,
+  };
+
+  await writeRuntimeConfig(configPath, nextConfig);
+  await rewriteXinitrcAppUrl(homeDir, target.appUrl);
+  const splash = await maybeSwitchSplash(target);
+  await runSudoCommand("/usr/bin/systemctl", ["restart", "getty@tty1.service"]);
+  return { splash };
 }
 
 function parsePathname(req: IncomingMessage): string {
@@ -195,7 +408,9 @@ async function serveStaticFile(root: string, pathname: string, res: ServerRespon
 
 async function main(): Promise<void> {
   const configPath = getConfigPath();
+  const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const config = await loadConfig(configPath);
+  const controlsPagePath = join(rootDir, "kiosk", "index.html");
 
   if (!(await pathExists(config.staticDir))) {
     throw new Error(`Static directory does not exist: ${config.staticDir}`);
@@ -211,6 +426,71 @@ async function main(): Promise<void> {
         uptimeSeconds: Math.floor(process.uptime()),
         staticDir: config.staticDir,
       });
+      return;
+    }
+
+    if (method === "GET" && (pathname === "/controls" || pathname === "/controls/")) {
+      await serveStaticFile(rootDir, "/kiosk/index.html", res);
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/apps") {
+      if (config.allowOnlyLocalhostControl && !isLocalhostAddress(req.socket.remoteAddress)) {
+        json(res, 403, { error: "Control endpoint is localhost-only." });
+        return;
+      }
+
+      const targets = await listInstalledTargets(config, configPath, rootDir);
+      json(res, 200, {
+        currentAppId: config.currentAppId ?? null,
+        apps: targets,
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/apps/switch") {
+      if (config.allowOnlyLocalhostControl && !isLocalhostAddress(req.socket.remoteAddress)) {
+        json(res, 403, { error: "Control endpoint is localhost-only." });
+        return;
+      }
+
+      let body: Record<string, unknown>;
+      try {
+        body = await parseRequestJson(req);
+      } catch {
+        json(res, 400, { error: "Invalid JSON body." });
+        return;
+      }
+
+      const appId = typeof body.appId === "string" ? slugify(body.appId) : "";
+      if (!appId) {
+        json(res, 400, { error: "appId is required." });
+        return;
+      }
+
+      const targets = await listInstalledTargets(config, configPath, rootDir);
+      const target = targets.find((entry) => entry.id === appId);
+      if (!target) {
+        json(res, 404, { error: `Unknown app target: ${appId}` });
+        return;
+      }
+
+      if (!(await pathExists(target.staticDir))) {
+        json(res, 400, { error: `Target static directory missing: ${target.staticDir}` });
+        return;
+      }
+
+      try {
+        const result = await switchTarget(target, configPath, config);
+        json(res, 200, {
+          ok: true,
+          appId: target.id,
+          appUrl: target.appUrl,
+          splash: result.splash,
+        });
+      } catch (error) {
+        json(res, 500, { error: `Failed to switch target: ${String(error)}` });
+      }
       return;
     }
 
@@ -266,6 +546,7 @@ async function main(): Promise<void> {
         event: "parsebox-server-started",
         port: config.port,
         staticDir: config.staticDir,
+        controlsPagePath,
         configPath,
       }),
     );

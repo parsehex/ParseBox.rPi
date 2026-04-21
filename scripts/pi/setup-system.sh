@@ -198,7 +198,8 @@ echo "[7/8] Configuring ParseBox power-control permissions"
 if [[ "${ENABLE_PARSEBOX_POWER_CONTROLS}" == "1" ]]; then
   cat >/etc/sudoers.d/parsebox-kiosk-controls <<EOF
 Cmnd_Alias PARSEBOX_POWER = /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
-${KIOSK_USER} ALL=(root) NOPASSWD: PARSEBOX_POWER
+Cmnd_Alias PARSEBOX_SWITCH = /usr/bin/systemctl restart getty@tty1.service, /usr/local/bin/parsebox-install-plymouth-theme *
+${KIOSK_USER} ALL=(root) NOPASSWD: PARSEBOX_POWER, PARSEBOX_SWITCH
 EOF
   chmod 440 /etc/sudoers.d/parsebox-kiosk-controls
 else

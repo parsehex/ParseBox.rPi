@@ -220,6 +220,9 @@ cd "${APP_REPO_DIR}"
 
 SERVE_DIR=""
 APP_URL_PATH="/"
+APP_DISPLAY_NAME="${APP_ID}"
+APP_THEME_ID="$(printf '%s' "${APP_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
+APP_SPLASH_IMAGE=""
 
 echo "[2/5] Preparing env and running installer/build"
 sync_env_from_example
@@ -238,6 +241,11 @@ fi
 
 if [[ "${run_repo_installer}" -eq 0 ]]; then
   if [[ -f "package.json" && -x "$(command -v npm || true)" ]]; then
+      APP_NAME_FROM_PACKAGE="$(node -e 'const p=require("./package.json"); process.stdout.write(typeof p.name === "string" ? p.name : "")' 2>/dev/null || true)"
+      if [[ -n "${APP_NAME_FROM_PACKAGE}" ]]; then
+        APP_DISPLAY_NAME="${APP_NAME_FROM_PACKAGE}"
+      fi
+
     if [[ -f "package-lock.json" ]]; then
       npm ci
     else
@@ -270,8 +278,8 @@ if [[ -f "${SPLASH_MARKER_FILE}" ]]; then
   app_splash_image=""
   app_splash_framebuffer="/dev/fb1"
   current_theme_id=""
-  app_theme_id="$(printf '%s' "${APP_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
-  app_theme_name="${APP_ID}"
+  app_theme_id="${APP_THEME_ID}"
+  app_theme_name="${APP_DISPLAY_NAME}"
 
   for candidate in \
     "./parsebox/splash.png" \
@@ -282,6 +290,7 @@ if [[ -f "${SPLASH_MARKER_FILE}" ]]; then
   do
     if [[ -f "${candidate}" ]]; then
       app_splash_image="${candidate}"
+      APP_SPLASH_IMAGE="${APP_REPO_DIR}/${candidate#./}"
       break
     fi
   done
@@ -314,7 +323,25 @@ else
   echo "  Splash is not enabled. Skipping app splash install."
 fi
 
-echo "[4/5] Writing install result"
+echo "[4/6] Writing app metadata"
+APP_METADATA_DIR="${HOME}/.parsebox/apps"
+APP_METADATA_FILE="${APP_METADATA_DIR}/${APP_THEME_ID}.json"
+mkdir -p "${APP_METADATA_DIR}" "${APP_REPO_DIR}/.parsebox"
+
+cat >"${APP_METADATA_FILE}" <<EOF
+{
+  "id": "${APP_THEME_ID}",
+  "name": "${APP_DISPLAY_NAME}",
+  "staticDir": "${SERVE_DIR}",
+  "appUrlPath": "${APP_URL_PATH}",
+  "splashImage": "${APP_SPLASH_IMAGE}",
+  "splashThemeId": "${APP_THEME_ID}"
+}
+EOF
+
+cp "${APP_METADATA_FILE}" "${APP_REPO_DIR}/.parsebox/app.json"
+
+echo "[5/6] Writing install result"
 cat >"${RESULT_FILE}" <<EOF
 APP_REPO_DIR=${APP_REPO_DIR}
 SERVICE_HTTP_DIRECTORY=${SERVE_DIR}
@@ -322,7 +349,7 @@ APP_URL_PATH=${APP_URL_PATH}
 INSTALL_WAS_UPDATE=${APP_UPDATED}
 EOF
 
-echo "[5/5] Remote app install complete"
+echo "[6/6] Remote app install complete"
 echo "Result file: ${RESULT_FILE}"
 REMOTE_SCRIPT
 )"
@@ -352,6 +379,7 @@ if [[ -n "${APP_URL_PATH}" ]]; then
 fi
 
 WAIT_URL="http://127.0.0.1:${SERVICE_HTTP_PORT}/health"
+CURRENT_APP_ID="$(printf '%s' "${APP_ID}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
 
 echo "Configuring kiosk user service and Chromium launch"
 PI_HOST="${PI_HOST}" \
@@ -362,6 +390,7 @@ APP_URL="${APP_URL}" \
 WAIT_URL="${WAIT_URL}" \
 SERVICE_HTTP_PORT="${SERVICE_HTTP_PORT}" \
 SERVICE_HTTP_DIRECTORY="${SERVICE_HTTP_DIRECTORY}" \
+CURRENT_APP_ID="${CURRENT_APP_ID}" \
 FORCE="${FORCE}" \
 bash "${SCRIPT_DIR}/setup-kiosk-user.sh"
 
