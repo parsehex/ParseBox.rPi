@@ -327,6 +327,58 @@ function execFileAsync(cmd: string, args: string[], opts: { cwd?: string } = {})
   });
 }
 
+function trimLogPart(part: string): string {
+  return part.trim().slice(-4000);
+}
+
+function appendCommandLog(log: string[], label: string, stdout: string, stderr: string): void {
+  const out = trimLogPart(stdout);
+  const err = trimLogPart(stderr);
+  if (out) {
+    log.push(`${label}: ${out}`);
+  }
+  if (err) {
+    log.push(`${label} (stderr): ${err}`);
+  }
+}
+
+async function readScriptsFromPackageJson(packageJsonPath: string): Promise<Record<string, unknown> | null> {
+  if (!(await pathExists(packageJsonPath))) {
+    return null;
+  }
+
+  try {
+    const pkgText = await readFile(packageJsonPath, "utf8");
+    const pkg = JSON.parse(pkgText) as Record<string, unknown>;
+    return (pkg.scripts as Record<string, unknown> | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveBuildCommand(repoDir: string): Promise<string[] | null> {
+  const rootScripts = await readScriptsFromPackageJson(join(repoDir, "package.json"));
+  if (!rootScripts) {
+    return null;
+  }
+
+  if (typeof rootScripts.build === "string") {
+    return ["run", "build"];
+  }
+
+  // ParsePlayer-style workspace script.
+  if (typeof rootScripts["frontend:build"] === "string") {
+    return ["run", "frontend:build"];
+  }
+
+  const frontendScripts = await readScriptsFromPackageJson(join(repoDir, "frontend", "package.json"));
+  if (frontendScripts && typeof frontendScripts.build === "string") {
+    return ["run", "build", "-w", "frontend"];
+  }
+
+  return null;
+}
+
 async function updateTarget(target: AppTarget): Promise<{ pulled: boolean; built: boolean; log: string[] }> {
   const repoDir = target.repoDir;
   if (!repoDir) {
@@ -340,24 +392,21 @@ async function updateTarget(target: AppTarget): Promise<{ pulled: boolean; built
   const log: string[] = [];
 
   const pull = await execFileAsync("git", ["-C", repoDir, "pull", "--ff-only"]);
-  log.push(pull.stdout.trim());
+  appendCommandLog(log, "git pull", pull.stdout, pull.stderr);
   const pulled = !pull.stdout.includes("Already up to date.");
 
   const pkgPath = join(repoDir, "package.json");
   let built = false;
   if (await pathExists(pkgPath)) {
-    const pkgText = await readFile(pkgPath, "utf8");
-    const pkg = JSON.parse(pkgText) as Record<string, unknown>;
-    const scripts = pkg.scripts as Record<string, unknown> | undefined;
-
     const lockExists = await pathExists(join(repoDir, "package-lock.json"));
     const installCmd = lockExists ? ["ci"] : ["install"];
     const install = await execFileAsync("npm", installCmd, { cwd: repoDir });
-    log.push(install.stdout.trim());
+    appendCommandLog(log, `npm ${installCmd.join(" ")}`, install.stdout, install.stderr);
 
-    if (scripts && typeof scripts.build === "string") {
-      const build = await execFileAsync("npm", ["run", "build"], { cwd: repoDir });
-      log.push(build.stdout.trim());
+    const buildCmd = await resolveBuildCommand(repoDir);
+    if (buildCmd) {
+      const build = await execFileAsync("npm", buildCmd, { cwd: repoDir });
+      appendCommandLog(log, `npm ${buildCmd.join(" ")}`, build.stdout, build.stderr);
       built = true;
     }
   }
@@ -589,7 +638,15 @@ async function main(): Promise<void> {
         const result = await updateTarget(target);
         json(res, 200, { ok: true, appId: target.id, ...result });
       } catch (error) {
-        json(res, 500, { error: `Failed to update: ${String(error)}` });
+        const errObj = error as { stderr?: string; stdout?: string };
+        const stderr = typeof errObj.stderr === "string" ? errObj.stderr.trim().slice(-1500) : "";
+        const stdout = typeof errObj.stdout === "string" ? errObj.stdout.trim().slice(-800) : "";
+        const details = stderr || stdout;
+        json(res, 500, {
+          error: details
+            ? `Failed to update: ${String(error)} | ${details}`
+            : `Failed to update: ${String(error)}`,
+        });
       }
       return;
     }

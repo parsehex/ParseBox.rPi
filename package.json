@@ -27,6 +27,7 @@
   },
   "homepage": "https://github.com/parsehex/ParseBox.rPi#readme",
   "devDependencies": {
+    "@types/node": "^25.6.0",
     "vitepress": "^1.6.4"
   }
 }
