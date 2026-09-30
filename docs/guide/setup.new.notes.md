@@ -7,7 +7,7 @@ Then, I've been doing a step that I want to replace:
 	With the SD Card still plugged in, edit 2 files
 		`/boot/config.txt`
 			Uncomment the line: `dtparam=spi=on`
-			Add at the end: `dtoverlay=piscreen,speed=16000000`
+			Add at the end: `dtoverlay=piscreen,speed=32000000,fps=60`
 		`/boot/cmdline.txt`
 			Add at the end of the line: ` fbcon=map:10`
 That got me in with console output on the display.

@@ -24,8 +24,10 @@ For SPI display support, ensure these are present:
 
 ```text
 dtparam=spi=on
-dtoverlay=piscreen,speed=16000000
+dtoverlay=piscreen,speed=32000000,fps=60
 ```
+
+`speed=32000000` and `fps=60` keep motion on the PiScreen (ILI9486) noticeably smoother than the older `speed=16000000` / default ~30fps settings. If the panel shows corruption, try `speed=24000000` first.
 
 For console output on the small display during boot (optional), append this token to the existing single line in `cmdline.txt`:
 

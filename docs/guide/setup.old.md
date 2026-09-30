@@ -34,7 +34,7 @@ Those booklet images are assembly context for the off-the-shelf hardware, not Pa
    - Before writing, open `/boot/config.txt` on your computer and add the following line to the bottom:
 
      ```text
-     dtoverlay=piscreen,speed=16000000
+     dtoverlay=piscreen,speed=32000000,fps=60
      ```
 
    - Also, un-comment the

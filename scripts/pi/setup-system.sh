@@ -139,7 +139,13 @@ printf '%s' "${XORG_TOUCH_TEMPLATE_B64}" | base64 -d \
 
 echo "[5/7] Updating boot config"
 append_unique_line "${BOOT_CONFIG_FILE}" "dtparam=spi=on"
-append_unique_line "${BOOT_CONFIG_FILE}" "dtoverlay=piscreen,speed=16000000"
+# Migrate/ensure PiScreen overlay uses higher SPI clock + 60fps deferred updates.
+# 16 MHz / default fps≈30 looks choppy; 32 MHz + fps=60 is much smoother on ILI9486.
+if grep -Eq '^dtoverlay=piscreen' "${BOOT_CONFIG_FILE}"; then
+  sed -i -E 's/^dtoverlay=piscreen.*/dtoverlay=piscreen,speed=32000000,fps=60/' "${BOOT_CONFIG_FILE}"
+else
+  append_unique_line "${BOOT_CONFIG_FILE}" "dtoverlay=piscreen,speed=32000000,fps=60"
+fi
 
 if [[ "${ENABLE_FBCON_MAP}" == "1" ]]; then
   append_cmdline_token "fbcon=map:10"
